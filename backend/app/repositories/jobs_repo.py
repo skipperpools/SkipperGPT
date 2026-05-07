@@ -1,0 +1,245 @@
+"""Data access layer for jobs and tasks.
+
+This module is the ONLY place in the codebase that issues SQL / SQLAlchemy
+queries. Routers and services depend on these functions, never on the engine
+or session directly. Swapping SQLite for Postgres / Supabase later means
+changing DATABASE_URL - this file does not need to be rewritten.
+"""
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from typing import Iterable, List, Optional
+
+from sqlalchemy import delete as sql_delete
+from sqlalchemy import select
+from sqlalchemy.orm import Session, selectinload
+
+from ..constants import MAX_JOB_CONTACTS, TASK_DEFINITIONS
+from ..models import Contact, Job, JobContactLink, JobDocument, JobPhoto, JobTask
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _job_load_options() -> tuple:
+    return (
+        selectinload(Job.tasks),
+        selectinload(Job.documents).selectinload(JobDocument.uploaded_by),
+        selectinload(Job.photos).selectinload(JobPhoto.uploaded_by),
+        selectinload(Job.contact_links).selectinload(JobContactLink.contact),
+    )
+
+
+def list_jobs(db: Session, *, include_archived: bool = False) -> List[Job]:
+    """List jobs: active only by default; when include_archived is True, archived only."""
+    stmt = (
+        select(Job)
+        .options(*_job_load_options())
+        .order_by(Job.created_at.desc())
+    )
+    if include_archived:
+        stmt = stmt.where(Job.archived.is_(True))
+    else:
+        stmt = stmt.where(Job.archived.is_(False))
+    return list(db.execute(stmt).scalars().all())
+
+
+def get_job(db: Session, job_id: int) -> Optional[Job]:
+    stmt = select(Job).options(*_job_load_options()).where(Job.id == job_id)
+    return db.execute(stmt).scalar_one_or_none()
+
+
+def replace_job_contact_links(db: Session, job_id: int, contact_ids: List[int]) -> None:
+    """Replace all job–contact links with ordered ids (deduped, max MAX_JOB_CONTACTS)."""
+    seen: set[int] = set()
+    ordered: List[int] = []
+    for cid in contact_ids:
+        if cid in seen:
+            continue
+        seen.add(cid)
+        ordered.append(cid)
+    if len(ordered) > MAX_JOB_CONTACTS:
+        raise ValueError(f"At most {MAX_JOB_CONTACTS} contacts per job")
+    if not ordered:
+        db.execute(sql_delete(JobContactLink).where(JobContactLink.job_id == job_id))
+        db.commit()
+        return
+    stmt = select(Contact.id).where(Contact.id.in_(ordered))
+    found = set(db.execute(stmt).scalars().all())
+    if len(found) != len(set(ordered)):
+        raise ValueError("Unknown contact id in contact_ids")
+    db.execute(sql_delete(JobContactLink).where(JobContactLink.job_id == job_id))
+    for i, cid in enumerate(ordered):
+        db.add(
+            JobContactLink(job_id=job_id, contact_id=cid, sort_order=i)
+        )
+    db.commit()
+
+
+def create_job(
+    db: Session, *, fields: dict, contact_ids: Optional[List[int]] = None
+) -> Job:
+    """Create a job and seed it with the default task list atomically."""
+    job = Job(**fields)
+    for index, (task_key, task_label) in enumerate(TASK_DEFINITIONS):
+        job.tasks.append(
+            JobTask(
+                task_key=task_key,
+                task_label=task_label,
+                status="not_started",
+                sort_order=index,
+            )
+        )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+    if contact_ids is not None:
+        replace_job_contact_links(db, job.id, contact_ids)
+    return job
+
+
+def update_job(db: Session, *, job: Job, fields: dict) -> Job:
+    for key, value in fields.items():
+        setattr(job, key, value)
+    db.commit()
+    db.refresh(job)
+    return job
+
+
+def get_task(db: Session, *, job_id: int, task_key: str) -> Optional[JobTask]:
+    stmt = select(JobTask).where(
+        JobTask.job_id == job_id, JobTask.task_key == task_key
+    )
+    return db.execute(stmt).scalar_one_or_none()
+
+
+def update_task(
+    db: Session,
+    *,
+    task: JobTask,
+    fields: dict,
+) -> JobTask:
+    """Apply a partial update to a task with completed_at side-effects.
+
+    - When status transitions TO 'completed' and completed_at is empty,
+      stamp it with the current UTC time.
+    - When status transitions AWAY FROM 'completed', clear completed_at.
+    """
+    new_status = fields.get("status")
+    if new_status is not None and new_status != task.status:
+        if new_status == "completed":
+            if task.completed_at is None:
+                task.completed_at = _utcnow()
+        else:
+            task.completed_at = None
+
+    for key, value in fields.items():
+        setattr(task, key, value)
+
+    db.commit()
+    db.refresh(task)
+    return task
+
+
+def count_jobs(db: Session) -> int:
+    stmt = select(Job)
+    return len(list(db.execute(stmt).scalars().all()))
+
+
+def insert_jobs_bulk(db: Session, jobs: Iterable[Job]) -> None:
+    """Used by the seed script."""
+    for job in jobs:
+        db.add(job)
+    db.commit()
+
+
+def get_job_document(
+    db: Session, *, job_id: int, document_id: int
+) -> Optional[JobDocument]:
+    stmt = select(JobDocument).where(
+        JobDocument.job_id == job_id,
+        JobDocument.id == document_id,
+    )
+    return db.execute(stmt).scalar_one_or_none()
+
+
+def add_job_document(
+    db: Session,
+    *,
+    job: Job,
+    title: str,
+    original_filename: str,
+    stored_path: str,
+    content_type: str,
+    category: str,
+    size_bytes: int,
+    uploaded_by_user_id: Optional[int],
+) -> JobDocument:
+    doc = JobDocument(
+        job_id=job.id,
+        title=title,
+        original_filename=original_filename,
+        stored_path=stored_path,
+        content_type=content_type,
+        category=category,
+        size_bytes=size_bytes,
+        uploaded_by_user_id=uploaded_by_user_id,
+    )
+    db.add(doc)
+    db.commit()
+    db.refresh(doc)
+    return doc
+
+
+def delete_job_document(db: Session, *, doc: JobDocument) -> None:
+    db.delete(doc)
+    db.commit()
+
+
+def update_job_document_title(
+    db: Session, *, doc: JobDocument, title: str
+) -> JobDocument:
+    doc.title = title
+    db.commit()
+    db.refresh(doc)
+    return doc
+
+
+def get_job_photo(
+    db: Session, *, job_id: int, photo_id: int
+) -> Optional[JobPhoto]:
+    stmt = select(JobPhoto).where(
+        JobPhoto.job_id == job_id,
+        JobPhoto.id == photo_id,
+    )
+    return db.execute(stmt).scalar_one_or_none()
+
+
+def add_job_photo(
+    db: Session,
+    *,
+    job: Job,
+    original_filename: str,
+    stored_path: str,
+    content_type: str,
+    size_bytes: int,
+    uploaded_by_user_id: Optional[int],
+) -> JobPhoto:
+    photo = JobPhoto(
+        job_id=job.id,
+        original_filename=original_filename,
+        stored_path=stored_path,
+        content_type=content_type,
+        size_bytes=size_bytes,
+        uploaded_by_user_id=uploaded_by_user_id,
+    )
+    db.add(photo)
+    db.commit()
+    db.refresh(photo)
+    return photo
+
+
+def delete_job_photo(db: Session, *, photo: JobPhoto) -> None:
+    db.delete(photo)
+    db.commit()

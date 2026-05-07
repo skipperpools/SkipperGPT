@@ -1,0 +1,425 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0b3d62" />
+    <link rel="icon" href="/favicon.ico" />
+    <title>Skipper Pools - Job Card Dashboard</title>
+    <link rel="stylesheet" href="/styles.css?v=20260506-3" />
+  </head>
+  <body>
+    <div id="login-screen" class="login-screen">
+      <form id="login-form" class="login-screen__panel">
+        <h1 class="login-screen__title">Skipper Pools</h1>
+        <p class="login-screen__subtitle">Job Card Dashboard — sign in</p>
+        <label class="field">
+          <span>Username</span>
+          <input name="username" required maxlength="64" autocomplete="username" />
+        </label>
+        <label class="field">
+          <span>Password</span>
+          <div class="field-password__wrap">
+            <input
+              id="login-password"
+              name="password"
+              type="password"
+              required
+              autocomplete="current-password"
+            />
+            <button
+              type="button"
+              class="field-password__toggle"
+              id="login-password-toggle"
+              aria-label="Show password"
+              aria-controls="login-password"
+              aria-pressed="false"
+            >
+              Show
+            </button>
+          </div>
+        </label>
+        <button type="submit" class="btn btn--primary btn--block">Sign in</button>
+      </form>
+    </div>
+
+    <div id="app-shell" class="app-shell" hidden>
+      <header class="topbar">
+        <div class="topbar__brand">
+          <img id="topbar-logo" class="topbar__logo-image" src="/graphics/Transparent-Logo-With-Glow.png" alt="Skipper Pools" />
+          <div class="topbar__user-menu">
+            <button id="user-menu-btn" class="topbar__user-btn" type="button" aria-haspopup="menu" aria-expanded="false">
+              <span id="user-menu-label">Account</span>
+              <span id="user-menu-badge" class="topbar__user-badge" hidden>0</span>
+            </button>
+            <div id="user-menu" class="topbar__menu" role="menu" hidden>
+              <button id="menu-new-job-btn" class="topbar__menu-item" type="button" role="menuitem" data-menu-action="new-job">+ New Job</button>
+              <button id="menu-feedback-btn" class="topbar__menu-item" type="button" role="menuitem" data-menu-action="feedback">Requests</button>
+              <button id="menu-notifications-btn" class="topbar__menu-item" type="button" role="menuitem" data-menu-action="notifications" hidden>
+                Billing notifications
+              </button>
+              <button id="menu-review-feedback-btn" class="topbar__menu-item" type="button" role="menuitem" data-menu-action="review-feedback" hidden>
+                Review requests
+              </button>
+              <button id="menu-contacts-btn" class="topbar__menu-item" type="button" role="menuitem" data-menu-action="contacts" hidden>Contacts</button>
+              <button id="menu-users-btn" class="topbar__menu-item" type="button" role="menuitem" data-menu-action="users" hidden>Users</button>
+              <button id="menu-view-archived-btn" class="topbar__menu-item" type="button" role="menuitem" data-menu-action="view-archived" hidden>
+                View archived projects
+              </button>
+              <button id="menu-logout-btn" class="topbar__menu-item" type="button" role="menuitem" data-menu-action="logout">Log out</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="topbar__tools">
+          <input
+            id="search"
+            class="search"
+            type="search"
+            placeholder="Search customer, address, manager..."
+            autocomplete="off"
+          />
+        </div>
+      </header>
+
+      <section class="legend" aria-label="Status legend">
+        <span class="legend__item"><i class="dot dot--not_started"></i>Not started</span>
+        <span class="legend__item"><i class="dot dot--in_progress"></i>In progress</span>
+        <span class="legend__item"><i class="dot dot--completed"></i>Completed</span>
+        <span class="legend__item"><i class="dot dot--issue"></i>Needs attention</span>
+      </section>
+
+      <main id="grid" class="card-grid" aria-live="polite">
+        <div class="empty" id="empty-state" hidden>
+          <p>No jobs yet. Click <strong>+ New Job</strong> to create one.</p>
+        </div>
+      </main>
+
+      <!-- New Job modal -->
+      <div id="modal" class="modal" hidden>
+        <div class="modal__backdrop" data-close="1"></div>
+        <form id="new-job-form" class="modal__panel" aria-labelledby="modal-title">
+          <header class="modal__header">
+            <h2 id="modal-title">New Job</h2>
+            <button type="button" class="btn btn--ghost" data-close="1" aria-label="Close">x</button>
+          </header>
+          <div class="modal__body">
+            <label class="field">
+              <span>Customer / Job name *</span>
+              <input name="customer_name" required maxlength="255" autocomplete="off" />
+            </label>
+            <label class="field">
+              <span>Address</span>
+              <input name="address" maxlength="500" autocomplete="off" />
+            </label>
+            <label class="field">
+              <span>Pool (P) or Pool/Spa (PS)?</span>
+              <input name="pool_type" maxlength="16" placeholder="P or PS" autocomplete="off" />
+            </label>
+            <div class="field-row">
+              <label class="field">
+                <span>Permit status</span>
+                <input name="permit_status" maxlength="64" placeholder="Pending / Issued / N/A" autocomplete="off" />
+              </label>
+              <label class="field">
+                <span>Permit #</span>
+                <input name="permit_number" maxlength="128" autocomplete="off" />
+              </label>
+            </div>
+            <label class="field">
+              <span>Field manager</span>
+              <input name="field_manager" maxlength="128" autocomplete="off" />
+            </label>
+            <label class="field">
+              <span>Notes</span>
+              <textarea name="notes" rows="3"></textarea>
+            </label>
+          </div>
+          <footer class="modal__footer">
+            <button type="button" class="btn btn--ghost" data-close="1">Cancel</button>
+            <button type="submit" class="btn btn--primary">Create Job</button>
+          </footer>
+        </form>
+      </div>
+
+      <!-- Edit Job modal (admin) -->
+      <div id="edit-job-modal" class="modal" hidden>
+        <div class="modal__backdrop" data-close="1"></div>
+        <form id="edit-job-form" class="modal__panel" aria-labelledby="edit-job-modal-title">
+          <input type="hidden" id="edit-job-id" name="job_id" value="" />
+          <header class="modal__header">
+            <h2 id="edit-job-modal-title">Edit Job</h2>
+            <button type="button" class="btn btn--ghost" data-close="1" aria-label="Close">x</button>
+          </header>
+          <div class="modal__body">
+            <label class="field">
+              <span>Customer / Job name *</span>
+              <input name="customer_name" required maxlength="255" autocomplete="off" />
+            </label>
+            <label class="field">
+              <span>Address</span>
+              <input name="address" maxlength="500" autocomplete="off" />
+            </label>
+            <label class="field">
+              <span>Pool (P) or Pool/Spa (PS)?</span>
+              <input name="pool_type" maxlength="16" placeholder="P or PS" autocomplete="off" />
+            </label>
+            <div class="field-row">
+              <label class="field">
+                <span>Permit status</span>
+                <input name="permit_status" maxlength="64" placeholder="Pending / Issued / N/A" autocomplete="off" />
+              </label>
+              <label class="field">
+                <span>Permit #</span>
+                <input name="permit_number" maxlength="128" autocomplete="off" />
+              </label>
+            </div>
+            <label class="field">
+              <span>Field manager</span>
+              <input name="field_manager" maxlength="128" autocomplete="off" />
+            </label>
+            <label class="field">
+              <span>Notes</span>
+              <textarea name="notes" rows="3"></textarea>
+            </label>
+            <div class="field edit-job-contacts-block">
+              <div class="edit-job-contacts-header">
+                <span>Contacts</span>
+              </div>
+              <p class="edit-job-contacts-hint">
+                Select from the shared directory (up to 25). Manage the directory from the Contacts menu.
+              </p>
+              <label class="field">
+                <span>Filter directory</span>
+                <input type="search" id="edit-job-contact-search" placeholder="Search name, role, phone…" autocomplete="off" />
+              </label>
+              <p class="edit-job-contacts-subhint">Selected for this job (order shown on card)</p>
+              <div id="edit-job-contact-selected" class="edit-job-contact-selected"></div>
+              <p class="edit-job-contacts-subhint">Add from directory</p>
+              <div id="edit-job-contact-catalog" class="edit-job-contact-catalog"></div>
+              <button type="button" class="btn btn--ghost btn--sm" id="edit-job-contact-new-toggle">+ New contact (save to directory)</button>
+              <div id="edit-job-contact-new-wrap" class="edit-job-contact-new-wrap" hidden>
+                <div class="edit-job-contact-row__fields">
+                  <label class="field field--compact">
+                    <span>Role / label</span>
+                    <input type="text" id="edit-job-new-label" maxlength="64" autocomplete="off" />
+                  </label>
+                  <label class="field field--compact">
+                    <span>Name</span>
+                    <input type="text" id="edit-job-new-name" maxlength="255" autocomplete="off" />
+                  </label>
+                  <label class="field field--compact">
+                    <span>Phone</span>
+                    <input type="text" id="edit-job-new-phone" maxlength="64" autocomplete="off" />
+                  </label>
+                  <label class="field field--compact">
+                    <span>Email</span>
+                    <input type="email" id="edit-job-new-email" maxlength="255" autocomplete="off" />
+                  </label>
+                </div>
+                <button type="button" class="btn btn--primary btn--sm" id="edit-job-contact-new-save">Save to directory &amp; add</button>
+              </div>
+            </div>
+          </div>
+          <footer class="modal__footer">
+            <button type="button" class="btn btn--ghost" data-close="1">Cancel</button>
+            <button type="submit" class="btn btn--primary">Save Changes</button>
+          </footer>
+        </form>
+      </div>
+
+      <!-- Contacts directory (admin/office) -->
+      <div id="contacts-directory-modal" class="modal" hidden>
+        <div class="modal__backdrop" data-close="1"></div>
+        <div class="modal__panel modal__panel--wide" aria-labelledby="contacts-directory-modal-title">
+          <header class="modal__header">
+            <h2 id="contacts-directory-modal-title">Contacts directory</h2>
+            <button type="button" class="btn btn--ghost" data-close="1" aria-label="Close">x</button>
+          </header>
+          <div class="modal__body modal__body--scroll" id="contacts-directory-modal-body"></div>
+        </div>
+      </div>
+
+      <!-- Users modal (admin) -->
+      <div id="users-modal" class="modal" hidden>
+        <div class="modal__backdrop" data-close="1"></div>
+        <div class="modal__panel modal__panel--wide" aria-labelledby="users-modal-title">
+          <header class="modal__header">
+            <h2 id="users-modal-title">Users</h2>
+            <button type="button" class="btn btn--ghost" data-close="1" aria-label="Close">x</button>
+          </header>
+          <div class="modal__body modal__body--scroll" id="users-modal-body"></div>
+        </div>
+      </div>
+
+      <!-- Requests / bugs (submit + your submissions) -->
+      <div id="feedback-modal" class="modal" hidden>
+        <div class="modal__backdrop" data-close="1"></div>
+        <div class="modal__panel modal__panel--wide" aria-labelledby="feedback-modal-title">
+          <header class="modal__header">
+            <h2 id="feedback-modal-title">Requests &amp; bugs</h2>
+            <button type="button" class="btn btn--ghost" data-close="1" aria-label="Close">x</button>
+          </header>
+          <div class="modal__body modal__body--scroll">
+            <form id="feedback-form">
+              <label class="field">
+                <span>Type</span>
+                <select id="feedback-kind" name="kind" required>
+                  <option value="request">Feature request</option>
+                  <option value="bug">Bug report</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Description *</span>
+                <textarea id="feedback-body" name="body" rows="5" required maxlength="8000" placeholder="Describe the request or bug…"></textarea>
+              </label>
+            </form>
+            <h3 class="users-section-title">Your submissions</h3>
+            <div id="feedback-mine-list" class="feedback-mine-list"></div>
+          </div>
+          <footer class="modal__footer">
+            <button type="button" class="btn btn--ghost" data-close="1">Close</button>
+            <button type="submit" form="feedback-form" class="btn btn--primary">Submit</button>
+          </footer>
+        </div>
+      </div>
+
+      <!-- Admin: review all feedback -->
+      <div id="feedback-review-modal" class="modal" hidden>
+        <div class="modal__backdrop" data-close="1"></div>
+        <div class="modal__panel modal__panel--wide" aria-labelledby="feedback-review-modal-title">
+          <header class="modal__header">
+            <h2 id="feedback-review-modal-title">Review requests</h2>
+            <button type="button" class="btn btn--ghost" data-close="1" aria-label="Close">x</button>
+          </header>
+          <div class="modal__body modal__body--scroll" id="feedback-review-modal-body"></div>
+        </div>
+      </div>
+
+      <!-- Billing notifications -->
+      <div id="notifications-modal" class="modal" hidden>
+        <div class="modal__backdrop" data-close="1"></div>
+        <div class="modal__panel modal__panel--wide" aria-labelledby="notifications-modal-title">
+          <header class="modal__header">
+            <h2 id="notifications-modal-title">Billing notifications</h2>
+            <button type="button" class="btn btn--ghost" data-close="1" aria-label="Close">x</button>
+          </header>
+          <div class="modal__body modal__body--scroll" id="notifications-modal-body"></div>
+        </div>
+      </div>
+
+      <!-- Contacts modal (read-only) -->
+      <div id="contacts-modal" class="modal" hidden>
+        <div class="modal__backdrop" data-close="1"></div>
+        <div class="modal__panel modal__panel--wide" aria-labelledby="contacts-modal-title">
+          <header class="modal__header">
+            <h2 id="contacts-modal-title">Contacts - <span id="contacts-modal-title-text"></span></h2>
+            <button type="button" class="btn btn--ghost" data-close="1" aria-label="Close">x</button>
+          </header>
+          <div class="modal__body modal__body--scroll" id="contacts-modal-body"></div>
+        </div>
+      </div>
+
+      <!-- Docs modal -->
+      <div id="docs-modal" class="modal" hidden>
+        <div class="modal__backdrop" data-close="1"></div>
+        <div class="modal__panel modal__panel--wide" aria-labelledby="docs-modal-title">
+          <header class="modal__header">
+            <h2 id="docs-modal-title">Docs - <span id="docs-modal-title-text"></span></h2>
+            <button type="button" class="btn btn--ghost" data-close="1" aria-label="Close">x</button>
+          </header>
+          <div class="modal__body modal__body--scroll" id="docs-modal-body"></div>
+        </div>
+      </div>
+
+      <!-- Photos modal -->
+      <div id="photos-modal" class="modal" hidden>
+        <div class="modal__backdrop" data-close="1"></div>
+        <div class="modal__panel modal__panel--wide photos-modal__panel" aria-labelledby="photos-modal-title">
+          <header class="modal__header">
+            <h2 id="photos-modal-title">Photos - <span id="photos-modal-title-text"></span></h2>
+            <button type="button" class="btn btn--ghost" data-close="1" aria-label="Close">x</button>
+          </header>
+          <div class="modal__body photos-modal__body">
+            <div class="photos-modal__toolbar">
+              <button id="photos-modal-prev-btn" type="button" class="btn btn--ghost btn--sm" aria-label="Previous page">Prev</button>
+              <span id="photos-modal-selection" class="photos-modal__selection"></span>
+              <button id="photos-modal-next-btn" type="button" class="btn btn--ghost btn--sm" aria-label="Next page">Next</button>
+              <div class="photos-modal__toolbar-spacer"></div>
+              <button id="photos-modal-download-btn" type="button" class="btn btn--ghost btn--sm">Download</button>
+              <button id="photos-modal-remove-btn" type="button" class="btn btn--ghost btn--sm" hidden>Remove</button>
+            </div>
+            <div id="photos-modal-main" class="photos-modal__main" aria-label="Photo grid"></div>
+            <div id="photos-modal-upload-wrap" class="photos-modal__upload" hidden>
+              <label
+                id="photos-modal-dropzone"
+                class="photos-modal__dropzone"
+                for="photos-modal-upload-input"
+              >
+                <span class="photos-modal__dropzone-text">
+                  Drop photos here or <span class="photos-modal__dropzone-link">choose files</span>
+                </span>
+                <span class="photos-modal__dropzone-hint">JPG, PNG, WebP, GIF, HEIC</span>
+              </label>
+              <input
+                id="photos-modal-upload-input"
+                type="file"
+                multiple
+                accept="image/jpeg,image/png,image/webp,image/gif,image/heic,image/heif,.jpg,.jpeg,.png,.webp,.gif,.heic,.heif"
+                aria-label="Choose photos to upload"
+                hidden
+              />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Mobile account menu modal -->
+      <div id="mobile-user-menu-modal" class="modal mobile-user-menu-modal" hidden>
+        <div class="modal__backdrop" data-close="1"></div>
+        <div class="modal__panel mobile-user-menu-modal__panel" role="dialog" aria-modal="true" aria-labelledby="mobile-user-menu-title">
+          <header class="modal__header mobile-user-menu-modal__header">
+            <h2 id="mobile-user-menu-title">Menu</h2>
+            <button type="button" class="btn btn--ghost mobile-user-menu-modal__close" data-close="1" aria-label="Close menu">X</button>
+          </header>
+          <div class="modal__body mobile-user-menu-modal__body">
+            <button class="topbar__menu-item mobile-user-menu-modal__item" type="button" role="menuitem" data-menu-action="new-job">+ New Job</button>
+            <button class="topbar__menu-item mobile-user-menu-modal__item" type="button" role="menuitem" data-menu-action="feedback">Requests</button>
+            <button class="topbar__menu-item mobile-user-menu-modal__item" type="button" role="menuitem" data-menu-action="notifications" hidden>
+              Billing notifications
+            </button>
+            <button class="topbar__menu-item mobile-user-menu-modal__item" type="button" role="menuitem" data-menu-action="review-feedback" hidden>
+              Review requests
+            </button>
+            <button class="topbar__menu-item mobile-user-menu-modal__item" type="button" role="menuitem" data-menu-action="contacts" hidden>Contacts</button>
+            <button class="topbar__menu-item mobile-user-menu-modal__item" type="button" role="menuitem" data-menu-action="users" hidden>Users</button>
+            <button class="topbar__menu-item mobile-user-menu-modal__item" type="button" role="menuitem" data-menu-action="view-archived" hidden>
+              View archived projects
+            </button>
+            <button class="topbar__menu-item mobile-user-menu-modal__item" type="button" role="menuitem" data-menu-action="logout">Log out</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Full-screen pinch-zoom photo viewer (above modals) -->
+      <div id="photo-viewer-overlay" class="photo-viewer" hidden role="dialog" aria-modal="true" aria-label="Photo viewer">
+        <div class="photo-viewer__backdrop" data-photo-viewer-close="1" tabindex="-1"></div>
+        <button type="button" class="photo-viewer__close btn btn--ghost" data-photo-viewer-close="1" aria-label="Close photo">
+          x
+        </button>
+        <div class="photo-viewer__stage" id="photo-viewer-stage">
+          <p class="photo-viewer__loading" id="photo-viewer-loading">Loading…</p>
+          <div class="photo-viewer__transform" id="photo-viewer-transform">
+            <img id="photo-viewer-img" class="photo-viewer__img" alt="" draggable="false" />
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Toasts: outside app shell so login errors are visible -->
+    <div id="toasts" class="toasts" aria-live="assertive"></div>
+
+    <script src="/app.js?v=20260506-3" defer></script>
+  </body>
+</html>

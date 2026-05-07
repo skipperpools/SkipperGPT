@@ -1,0 +1,60 @@
+# Render Blueprint for the Skipper Pools Job Card Dashboard.
+#
+# Deploys a single FastAPI web service that also serves the static frontend,
+# a managed Postgres database, and a Persistent Disk that holds Docs/ and
+# Photos/ at /var/skipper.
+#
+# After importing this blueprint:
+#   1. Push the repo to GitHub and connect it to a new Render Blueprint.
+#   2. Render provisions the database, disk, and web service.
+#   3. From the service's Render Shell run:
+#        cd backend && python -m app.create_admin <username> <password>
+#   4. (Optional) Migrate existing SQLite data from your local machine:
+#        python -m app.migrate_sqlite_to_postgres --source data/skipper.db
+#      with DATABASE_URL pointed at Render's external Postgres URL.
+#
+# Pricing target: ~$15.50/mo (Starter web + Basic-256mb DB + 10 GB disk).
+
+databases:
+  - name: skipper-db
+    plan: basic-256mb
+    databaseName: skipper
+    user: skipper
+
+services:
+  - type: web
+    name: skipper
+    runtime: python
+    plan: starter
+    region: oregon
+    branch: main
+    buildCommand: pip install -r backend/requirements.txt
+    startCommand: cd backend && uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    autoDeploy: true
+    disk:
+      name: skipper-data
+      mountPath: /var/skipper
+      sizeGB: 10
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: DATABASE_URL
+        fromDatabase:
+          name: skipper-db
+          property: connectionString
+      - key: DOCS_ROOT
+        value: /var/skipper
+      - key: SECRET_KEY
+        generateValue: true
+      - key: ACCESS_TOKEN_EXPIRE_MINUTES
+        value: "10080"
+      - key: MAX_UPLOAD_MB
+        value: "25"
+      # Leave blank when the UI is served by this same FastAPI process
+      # (default). Set to a comma-separated list of origins only if you
+      # ever consume the API from a different host.
+      - key: CORS_ALLOWED_ORIGINS
+        sync: false
