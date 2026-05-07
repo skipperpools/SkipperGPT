@@ -6,11 +6,9 @@ the codebase needs to change to switch.
 """
 from __future__ import annotations
 
-import socket
 from pathlib import Path
 
 from sqlalchemy import create_engine, event
-from sqlalchemy.engine import make_url
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 from .config import PROJECT_ROOT, settings
@@ -58,40 +56,26 @@ def _strip_pgbouncer_param(database_url: str) -> str:
     return cleaned.replace("?&", "?").rstrip("?")
 
 
-def _prefer_ipv4_hostaddr(database_url: str) -> str:
-    """Add libpq hostaddr (IPv4) when a hostname resolves to v6 and v4.
+def _local_only_database_url() -> str:
+    """Use SQLite only for runtime until cloud DB migration is revisited.
 
-    Some hosts (e.g., managed Postgres providers) publish AAAA and A records.
-    In environments without IPv6 routing, psycopg/libpq may attempt AAAA first
-    and fail before reaching IPv4. Supplying `hostaddr` pins an IPv4 socket
-    while keeping the original hostname for TLS/SNI.
+    If DATABASE_URL is set to a non-SQLite URL, ignore it intentionally and
+    fall back to the project-local SQLite file.
     """
-    if not database_url.startswith("postgresql"):
-        return database_url
-    try:
-        url = make_url(database_url)
-    except Exception:
-        return database_url
-    if not url.host or "hostaddr" in url.query:
-        return database_url
-    try:
-        infos = socket.getaddrinfo(
-            url.host,
-            url.port or 5432,
-            family=socket.AF_INET,
-            type=socket.SOCK_STREAM,
-        )
-    except OSError:
-        return database_url
-    if not infos:
-        return database_url
-    ipv4_addr = infos[0][4][0]
-    return url.update_query_dict({"hostaddr": ipv4_addr}).render_as_string(hide_password=False)
+    candidate = settings.database_url.strip()
+    if candidate.startswith("sqlite:///"):
+        return _resolve_sqlite_path(candidate)
+    return _resolve_sqlite_path("sqlite:///./data/skipper.db")
 
 
-_resolved_url = _strip_pgbouncer_param(
-    _prefer_ipv4_hostaddr(_normalize_postgres_scheme(_resolve_sqlite_path(settings.database_url)))
-)
+# Cloud DB integration (Postgres/Supabase) is intentionally paused for now.
+# Keep helper functions above for later revisit, but force runtime to local SQLite.
+#
+# Previous runtime URL pipeline:
+# _resolved_url = _strip_pgbouncer_param(
+#     _prefer_ipv4_hostaddr(_normalize_postgres_scheme(_resolve_sqlite_path(settings.database_url)))
+# )
+_resolved_url = _local_only_database_url()
 _is_sqlite = _resolved_url.startswith("sqlite")
 _connect_args = {"check_same_thread": False} if _is_sqlite else {"prepare_threshold": None}
 

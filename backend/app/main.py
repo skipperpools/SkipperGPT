@@ -174,7 +174,7 @@ def _ensure_job_document_category_column() -> None:
 app = FastAPI(
     title="Skipper Pools - Job Card Dashboard",
     version="0.1.0",
-    description="Local-first job card dashboard. Swappable to Postgres/Supabase via DATABASE_URL.",
+    description="Local-first job card dashboard using project SQLite storage.",
 )
 
 # CORS is only needed when the API is consumed from a different origin than
