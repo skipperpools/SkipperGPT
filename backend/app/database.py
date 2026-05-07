@@ -6,9 +6,11 @@ the codebase needs to change to switch.
 """
 from __future__ import annotations
 
+import socket
 from pathlib import Path
 
 from sqlalchemy import create_engine, event
+from sqlalchemy.engine import make_url
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 from .config import PROJECT_ROOT, settings
@@ -56,8 +58,39 @@ def _strip_pgbouncer_param(database_url: str) -> str:
     return cleaned.replace("?&", "?").rstrip("?")
 
 
+def _prefer_ipv4_hostaddr(database_url: str) -> str:
+    """Add libpq hostaddr (IPv4) when a hostname resolves to v6 and v4.
+
+    Some hosts (e.g., managed Postgres providers) publish AAAA and A records.
+    In environments without IPv6 routing, psycopg/libpq may attempt AAAA first
+    and fail before reaching IPv4. Supplying `hostaddr` pins an IPv4 socket
+    while keeping the original hostname for TLS/SNI.
+    """
+    if not database_url.startswith("postgresql"):
+        return database_url
+    try:
+        url = make_url(database_url)
+    except Exception:
+        return database_url
+    if not url.host or "hostaddr" in url.query:
+        return database_url
+    try:
+        infos = socket.getaddrinfo(
+            url.host,
+            url.port or 5432,
+            family=socket.AF_INET,
+            type=socket.SOCK_STREAM,
+        )
+    except OSError:
+        return database_url
+    if not infos:
+        return database_url
+    ipv4_addr = infos[0][4][0]
+    return url.update_query_dict({"hostaddr": ipv4_addr}).render_as_string(hide_password=False)
+
+
 _resolved_url = _strip_pgbouncer_param(
-    _normalize_postgres_scheme(_resolve_sqlite_path(settings.database_url))
+    _prefer_ipv4_hostaddr(_normalize_postgres_scheme(_resolve_sqlite_path(settings.database_url)))
 )
 _is_sqlite = _resolved_url.startswith("sqlite")
 _connect_args = {"check_same_thread": False} if _is_sqlite else {"prepare_threshold": None}
