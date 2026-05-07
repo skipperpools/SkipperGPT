@@ -50,14 +50,23 @@ def _normalize_postgres_scheme(database_url: str) -> str:
     return database_url
 
 
-_resolved_url = _normalize_postgres_scheme(_resolve_sqlite_path(settings.database_url))
+def _strip_pgbouncer_param(database_url: str) -> str:
+    """Drop Supabase template flag unsupported by psycopg connection kwargs."""
+    cleaned = database_url.replace("?pgbouncer=true", "?").replace("&pgbouncer=true", "")
+    return cleaned.replace("?&", "?").rstrip("?")
+
+
+_resolved_url = _strip_pgbouncer_param(
+    _normalize_postgres_scheme(_resolve_sqlite_path(settings.database_url))
+)
 _is_sqlite = _resolved_url.startswith("sqlite")
+_connect_args = {"check_same_thread": False} if _is_sqlite else {"prepare_threshold": None}
 
 engine = create_engine(
     _resolved_url,
     echo=False,
     future=True,
-    connect_args={"check_same_thread": False} if _is_sqlite else {},
+    connect_args=_connect_args,
 )
 
 
