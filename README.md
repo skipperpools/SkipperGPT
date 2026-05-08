@@ -2,7 +2,7 @@
 
 A lightweight, local-first internal dashboard for tracking pool builds as digital job folders. Each job is a flippable card that shows a progress snapshot on the front and the full master-schedule checklist on the back.
 
-Runs on the office PC against a local SQLite database. The data layer is structured so you can later move to Render + Supabase / Postgres by changing one environment variable.
+Runs on the office PC against a local SQLite database.
 
 ---
 
@@ -19,7 +19,7 @@ Runs on the office PC against a local SQLite database. The data layer is structu
 - Billing milestone notifications for office/admin when certain steps are marked complete; mark items **billed** from the notifications list.
 - User-submitted feedback (requests / bugs); admins can triage and reply with an admin note.
 - Search by customer, address, manager, or permit number.
-- SQLite by default; swap to Postgres / Supabase by changing `DATABASE_URL`.
+- SQLite-only runtime (local-first production mode).
 
 ---
 
@@ -75,7 +75,7 @@ SkipperGPT/
   README.md
 ```
 
-The frontend talks ONLY to `/api/*` routes. It never touches the database, so swapping the storage backend is purely a backend concern.
+The frontend talks ONLY to `/api/*` routes. It never touches the database.
 
 ---
 
@@ -111,7 +111,7 @@ Copy the env template:
 copy .env.example .env
 ```
 
-(Defaults are fine for local SQLite. Edit `.env` later when migrating.)
+(Defaults are fine for local SQLite.)
 
 ### First login (JWT)
 
@@ -337,74 +337,11 @@ Job-level "Notes / issue" notes go on the `jobs.notes` field and render at the t
 
 ---
 
-## Deploying to Render
+## Cloud Deploy Notes (Paused)
 
-A `render.yaml` Blueprint at the repo root provisions everything the app needs in one click:
-
-- Render Web Service (Starter) running `uvicorn app.main:app` and serving the static frontend at `/`
-- Render Postgres (Basic-256mb)
-- Render Persistent Disk (10 GB) mounted at `/var/skipper`, holding `Docs/` and `Photos/`
-
-Estimated cost: ~$15.50/month.
-
-### 1. Push the repo to GitHub
-
-```bash
-git push origin main
-```
-
-### 2. Create a Render Blueprint
-
-- New + -> Blueprint -> connect your GitHub repo.
-- Render reads `render.yaml`, provisions the database, disk, and web service, and generates a `SECRET_KEY` automatically.
-- First build takes a few minutes (Pillow / pillow-heif / pypdfium2 wheels install).
-
-### 3. Create the first admin
-
-In the web service's Render Shell:
-
-```bash
-cd backend
-python -m app.create_admin <username> <password>
-```
-
-You can now log in at `https://<your-service>.onrender.com/`.
-
-### 4. (Optional) Migrate existing local data
-
-If you already have jobs, photos, and PDFs in your local SQLite + folders, copy them all up in two steps.
-
-**a) Database** (run from your local machine, in `backend/`):
-
-```powershell
-$env:DATABASE_URL = "<paste Render Postgres EXTERNAL connection string>"
-python -m app.migrate_sqlite_to_postgres --source ../data/skipper.db
-```
-
-The script preserves primary keys and resets sequences. It refuses to overwrite a non-empty target unless you pass `--force`. Make sure your local app has been launched at least once recently so all `_ensure_*` schema migrations have run on the source SQLite file.
-
-**b) Files** (`Docs/` and `Photos/`) - Render gives every paid web service an SSH endpoint. From the dashboard, copy your service's SSH command, then `rsync` the directories up to the persistent disk:
-
-```bash
-rsync -avz Docs/   srv-XXXX@ssh.oregon.render.com:/var/skipper/Docs/
-rsync -avz Photos/ srv-XXXX@ssh.oregon.render.com:/var/skipper/Photos/
-```
-
-### 5. Tighten CORS (only if needed)
-
-The blueprint leaves `CORS_ALLOWED_ORIGINS` blank, which disables CORS entirely - correct since the FastAPI process serves both the API and the UI. Set it to a comma-separated list of origins only if you ever consume the API from a different host.
-
-### What you do NOT have to change
-
-- `frontend/*` - the UI only knows about `/api/*` routes.
-- `routers/*`, `services/*`, `schemas.py`, `models.py` - SQLAlchemy works on SQLite and Postgres.
-- `repositories/jobs_repo.py` - this is the data-access seam; queries are dialect-agnostic.
-
-### Recommended follow-ups
-
-- Add Alembic migrations instead of relying on `Base.metadata.create_all` plus the `_ensure_*` helpers in `backend/app/main.py`.
-- Wire a custom domain in the Render dashboard (TLS is automatic).
-- Increase the persistent disk size if `Photos/` outgrows 10 GB.
+Hosted Postgres/Supabase deployment work is intentionally paused while the app
+operates in local production mode (SQLite + ngrok). Existing migration helpers
+remain in the repository for future investigation.
 
 ---
 
@@ -415,7 +352,7 @@ The blueprint leaves `CORS_ALLOWED_ORIGINS` blank, which disables CORS entirely 
 | Variable | Default | Notes |
 | -------- | ------- | ----- |
 | `APP_ENV` | `local` | Tagged in `/api/health`; informational |
-| `DATABASE_URL` | `sqlite:///./data/skipper.db` | SQLAlchemy URL; swap for cloud |
+| `DATABASE_URL` | `sqlite:///./data/skipper.db` | SQLite URL used by the app runtime |
 | `DOCS_ROOT` | project root | PDF/photo filesystem root (`Path`) |
 | `MAX_UPLOAD_MB` | `25` | Per-upload size limit |
 | `SCHEDULE_XLSX_PATH` | *(unset)* | Optional full path to `Schedules.xlsx` |

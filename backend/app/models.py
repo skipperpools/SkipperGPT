@@ -18,7 +18,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
-from .constants import DOC_CATEGORY_FIELD
+from .constants import DOC_CATEGORY_FIELD, JOB_TYPE_NEW_CONSTRUCTION
 
 
 class Contact(Base):
@@ -84,6 +84,10 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+    job_notes: Mapped[List["JobNote"]] = relationship(
+        foreign_keys="JobNote.author_user_id",
+        passive_deletes=True,
+    )
 
 
 class Job(Base):
@@ -97,6 +101,12 @@ class Job(Base):
     permit_number: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     field_manager: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    job_type: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default=JOB_TYPE_NEW_CONSTRUCTION,
+        server_default=JOB_TYPE_NEW_CONSTRUCTION,
+    )
     archived: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
@@ -136,6 +146,37 @@ class Job(Base):
         passive_deletes=True,
         order_by="JobContactLink.sort_order",
     )
+    job_notes: Mapped[List["JobNote"]] = relationship(
+        back_populates="job",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="JobNote.created_at",
+    )
+
+
+class JobNote(Base):
+    __tablename__ = "job_notes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    job_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("jobs.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    author_user_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    job: Mapped["Job"] = relationship(back_populates="job_notes")
+    author: Mapped["User"] = relationship(foreign_keys=[author_user_id])
 
 
 class JobTask(Base):
@@ -165,6 +206,22 @@ class JobTask(Base):
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
     job: Mapped[Job] = relationship(back_populates="tasks")
+
+
+class JobTypeTaskTemplate(Base):
+    __tablename__ = "job_type_task_templates"
+    __table_args__ = (
+        UniqueConstraint("job_type", "task_key", name="uq_job_type_task_templates_key"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    job_type: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    task_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    task_label: Mapped[str] = mapped_column(String(128), nullable=False)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
 
 
 class JobDocument(Base):

@@ -17,10 +17,11 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import select, text
+from sqlalchemy import inspect, select, text
 from sqlalchemy.exc import SQLAlchemyError
 
 from .config import PROJECT_ROOT, settings
+from .constants import JOB_TYPE_NEW_CONSTRUCTION
 from .database import Base, SessionLocal, engine
 from .routers import auth, contacts, feedback, health, job_documents, job_photos, jobs, notifications, users
 
@@ -34,6 +35,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 logger = logging.getLogger("skipper.app")
 
 FRONTEND_DIR = PROJECT_ROOT / "frontend"
+GRAPHICS_DIR = PROJECT_ROOT / "graphics"
 
 
 def _jobs_column_names(conn, dialect: str) -> set[str]:
@@ -117,6 +119,23 @@ def _ensure_photos_folder_name_column() -> None:
             logger.info("Added column jobs.photos_folder_name")
 
 
+def _ensure_job_type_column() -> None:
+    """Add jobs.job_type if missing and backfill existing rows."""
+    dialect = engine.dialect.name
+    with engine.begin() as conn:
+        cols = _jobs_column_names(conn, dialect)
+        if "job_type" not in cols:
+            conn.execute(text("ALTER TABLE jobs ADD COLUMN job_type VARCHAR(32)"))
+            logger.info("Added column jobs.job_type")
+        conn.execute(
+            text(
+                "UPDATE jobs SET job_type = :default_job_type "
+                "WHERE job_type IS NULL OR TRIM(job_type) = ''"
+            ),
+            {"default_job_type": JOB_TYPE_NEW_CONSTRUCTION},
+        )
+
+
 def _migrate_legacy_contacts_and_drop_column() -> None:
     """Import legacy jobs.contacts JSON into relational tables; drop column after."""
     dialect = engine.dialect.name
@@ -171,6 +190,14 @@ def _ensure_job_document_category_column() -> None:
         )
 
 
+def _ensure_job_notes_table() -> None:
+    """Ensure job_notes table exists for older deployments."""
+    table_names = set(inspect(engine).get_table_names())
+    if "job_notes" not in table_names:
+        Base.metadata.create_all(bind=engine, tables=[models.JobNote.__table__])
+        logger.info("Created table job_notes")
+
+
 app = FastAPI(
     title="Skipper Pools - Job Card Dashboard",
     version="0.1.0",
@@ -207,7 +234,9 @@ async def _set_frontend_cache_headers(request: Request, call_next):
 @app.on_event("startup")
 def _on_startup() -> None:
     Base.metadata.create_all(bind=engine)
+    _ensure_job_notes_table()
     _ensure_pool_type_column()
+    _ensure_job_type_column()
     _ensure_docs_folder_name_column()
     _ensure_photos_folder_name_column()
     _migrate_legacy_contacts_and_drop_column()
@@ -263,6 +292,10 @@ app.include_router(users.router)
 app.include_router(feedback.router)
 app.include_router(notifications.router)
 
+
+# Shared brand assets (favicon, logos) live next to the repo root `graphics/` folder.
+if GRAPHICS_DIR.exists():
+    app.mount("/graphics", StaticFiles(directory=str(GRAPHICS_DIR)), name="graphics")
 
 # Serve the static frontend. Mounting at "/" with html=True lets index.html
 # load directly at http://localhost:8000/.

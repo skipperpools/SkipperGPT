@@ -1,11 +1,23 @@
-"""Master schedule task definitions used to seed every new job."""
+"""Job/task constants and default templates."""
 from __future__ import annotations
 
 from typing import List, Tuple
 
-# (task_key, task_label) in display / sort order.
-# Matches the Skipper Pools master schedule columns.
-TASK_DEFINITIONS: List[Tuple[str, str]] = [
+JOB_TYPE_NEW_CONSTRUCTION = "new_construction"
+JOB_TYPE_RENOVATION = "renovation"
+JOB_TYPE_MISC = "misc"
+JOB_TYPE_SALES = "sales"
+VALID_JOB_TYPES = frozenset(
+    {
+        JOB_TYPE_NEW_CONSTRUCTION,
+        JOB_TYPE_RENOVATION,
+        JOB_TYPE_MISC,
+        JOB_TYPE_SALES,
+    }
+)
+
+# (task_key, task_label) in display / sort order for the base New Construction flow.
+NEW_CONSTRUCTION_TASK_DEFINITIONS: List[Tuple[str, str]] = [
     ("permit_application", "Permit Application"),
     ("permit_received", "Permit Received"),
     ("excavation", "Excavation"),
@@ -40,6 +52,31 @@ TASK_DEFINITIONS: List[Tuple[str, str]] = [
     ("final_qi", "Final QI"),
     ("final_inspection", "Final Inspections"),
 ]
+
+RENOVATION_TASK_DEFINITIONS: List[Tuple[str, str]] = [
+    ("reno_scope_approved", "Scope Approved"),
+    ("reno_materials_ordered", "Materials Ordered"),
+    ("reno_work_started", "Work Started"),
+    ("reno_final_walkthrough", "Final Walkthrough"),
+]
+
+MISC_TASK_DEFINITIONS: List[Tuple[str, str]] = [
+    ("misc_scope_defined", "Scope Defined"),
+    ("misc_scheduled", "Scheduled"),
+    ("misc_completed", "Completed"),
+]
+
+SALES_TASK_DEFINITIONS: List[Tuple[str, str]] = []
+
+TASK_DEFINITIONS_BY_JOB_TYPE: dict[str, List[Tuple[str, str]]] = {
+    JOB_TYPE_NEW_CONSTRUCTION: NEW_CONSTRUCTION_TASK_DEFINITIONS,
+    JOB_TYPE_RENOVATION: RENOVATION_TASK_DEFINITIONS,
+    JOB_TYPE_MISC: MISC_TASK_DEFINITIONS,
+    JOB_TYPE_SALES: SALES_TASK_DEFINITIONS,
+}
+
+# Backwards-compatible alias used by existing sync tooling (new construction).
+TASK_DEFINITIONS = NEW_CONSTRUCTION_TASK_DEFINITIONS
 
 TASK_KEYS = {key for key, _ in TASK_DEFINITIONS}
 

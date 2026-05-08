@@ -8,15 +8,32 @@ from sqlalchemy.orm import Session
 
 from ..constants import (
     BILLING_NOTIFICATION_TASK_KEYS,
+    JOB_TYPE_MISC,
+    JOB_TYPE_NEW_CONSTRUCTION,
+    JOB_TYPE_RENOVATION,
+    JOB_TYPE_SALES,
     NOTIFICATION_TYPE_BILLING,
     STATUS_COMPLETED,
+    VALID_JOB_TYPES,
 )
 from ..config import settings
 from ..database import get_db
 from ..deps.auth import get_current_user, require_roles
 from ..models import User
 from ..repositories import jobs_repo, notifications_repo
-from ..schemas import JobCreate, JobRead, JobTaskUpdate, JobUpdate
+from ..schemas import (
+    JobCreate,
+    JobNoteCreate,
+    JobNoteRead,
+    JobRead,
+    JobTaskCreate,
+    JobTaskMove,
+    JobTaskUpdate,
+    JobTypeConvertRequest,
+    JobTypeTaskTemplateCreate,
+    JobTypeTaskTemplateRead,
+    JobUpdate,
+)
 from ..services.job_disk_sync import sync_job_attachments_from_disk
 from ..services.job_docs_fs import move_job_docs_on_rename
 from ..services.job_photos_fs import move_job_photos_on_rename
@@ -25,16 +42,30 @@ from ..services.jobs_service import to_job_read, to_job_read_list
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 
 
+def _to_job_note_read(note) -> JobNoteRead:
+    return JobNoteRead(
+        id=note.id,
+        job_id=note.job_id,
+        author_user_id=note.author_user_id,
+        author_username=note.author.username if note.author else None,
+        author_role=note.author.role if note.author else None,
+        body=note.body,
+        created_at=note.created_at,
+    )
+
+
 @router.get("", response_model=List[JobRead])
 def list_jobs(
     include_archived: bool = False,
-    _user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> List[JobRead]:
     jobs = jobs_repo.list_jobs(db, include_archived=include_archived)
     for j in jobs:
         sync_job_attachments_from_disk(db, j, settings.docs_root)
     jobs = jobs_repo.list_jobs(db, include_archived=include_archived)
+    if user.role == "field":
+        jobs = [job for job in jobs if job.job_type != JOB_TYPE_SALES]
     return to_job_read_list(jobs)
 
 
@@ -85,6 +116,12 @@ def update_job(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
     fields = payload.model_dump(exclude_unset=True)
     contact_ids = fields.pop("contact_ids", None)
+    next_job_type = fields.pop("job_type", None)
+    if next_job_type is not None and next_job_type != job.job_type:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="job_type is locked after creation",
+        )
     if not fields and contact_ids is None:
         return to_job_read(job)
     wants_archive = "archived" in fields
@@ -138,6 +175,179 @@ def update_job(
     return to_job_read(job)
 
 
+@router.delete("/{job_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_job(
+    job_id: int,
+    _user: User = Depends(require_roles("admin")),
+    db: Session = Depends(get_db),
+) -> None:
+    job = jobs_repo.get_job(db, job_id)
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    jobs_repo.delete_job(db, job=job)
+
+
+@router.get("/{job_id}/notes", response_model=List[JobNoteRead])
+def list_job_notes(
+    job_id: int,
+    _user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> List[JobNoteRead]:
+    job = jobs_repo.get_job(db, job_id)
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    notes = jobs_repo.list_job_notes(db, job_id=job_id)
+    return [_to_job_note_read(note) for note in notes]
+
+
+@router.post("/{job_id}/notes", response_model=JobNoteRead, status_code=status.HTTP_201_CREATED)
+def create_job_note(
+    job_id: int,
+    payload: JobNoteCreate,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> JobNoteRead:
+    job = jobs_repo.get_job(db, job_id)
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    note = jobs_repo.create_job_note(
+        db,
+        job_id=job_id,
+        author_user_id=user.id,
+        body=payload.body,
+    )
+    note = jobs_repo.get_job_note(db, job_id=job_id, note_id=note.id)
+    assert note is not None
+    return _to_job_note_read(note)
+
+
+@router.delete("/{job_id}/notes/{note_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_job_note(
+    job_id: int,
+    note_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> None:
+    job = jobs_repo.get_job(db, job_id)
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    note = jobs_repo.get_job_note(db, job_id=job_id, note_id=note_id)
+    if note is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job note not found")
+    if user.role != "admin" and note.author_user_id != user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You can only delete notes you posted",
+        )
+    jobs_repo.delete_job_note(db, note=note)
+
+
+@router.post("/{job_id}/tasks", response_model=JobRead, status_code=status.HTTP_201_CREATED)
+def create_custom_task(
+    job_id: int,
+    payload: JobTaskCreate,
+    _user: User = Depends(require_roles("admin", "office")),
+    db: Session = Depends(get_db),
+) -> JobRead:
+    job = jobs_repo.get_job(db, job_id)
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    jobs_repo.add_job_task(db, job=job, task_label=payload.task_label)
+    refreshed = jobs_repo.get_job(db, job_id)
+    assert refreshed is not None
+    return to_job_read(refreshed)
+
+
+@router.post("/{job_id}/convert-sales", response_model=JobRead)
+def convert_sales_job(
+    job_id: int,
+    payload: JobTypeConvertRequest,
+    _user: User = Depends(require_roles("admin", "office")),
+    db: Session = Depends(get_db),
+) -> JobRead:
+    source_job = jobs_repo.get_job(db, job_id)
+    if source_job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    if source_job.job_type != JOB_TYPE_SALES:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Only Sales jobs can be converted with this route",
+        )
+    if payload.target_job_type not in {
+        JOB_TYPE_NEW_CONSTRUCTION,
+        JOB_TYPE_RENOVATION,
+        JOB_TYPE_MISC,
+    }:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="target_job_type must be one of ['misc', 'new_construction', 'renovation']",
+        )
+    create_fields = {
+        "customer_name": source_job.customer_name,
+        "job_type": payload.target_job_type,
+        "address": source_job.address,
+        "pool_type": source_job.pool_type,
+        "permit_status": source_job.permit_status,
+        "permit_number": source_job.permit_number,
+        "field_manager": source_job.field_manager,
+        "notes": source_job.notes,
+        "archived": False,
+    }
+    contact_ids = [link.contact_id for link in source_job.contact_links]
+    created_job = jobs_repo.create_job(
+        db,
+        fields=create_fields,
+        contact_ids=contact_ids,
+    )
+    final_job = jobs_repo.get_job(db, created_job.id)
+    assert final_job is not None
+    return to_job_read(final_job)
+
+
+@router.patch("/{job_id}/tasks/{task_key}/move", response_model=JobRead)
+def move_task(
+    job_id: int,
+    task_key: str,
+    payload: JobTaskMove,
+    _user: User = Depends(require_roles("admin", "office")),
+    db: Session = Depends(get_db),
+) -> JobRead:
+    task = jobs_repo.get_task(db, job_id=job_id, task_key=task_key)
+    if task is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Task '{task_key}' not found on job {job_id}",
+        )
+    jobs_repo.move_job_task(
+        db,
+        job_id=job_id,
+        task_key=task_key,
+        direction=payload.direction,
+    )
+    job = jobs_repo.get_job(db, job_id)
+    assert job is not None
+    return to_job_read(job)
+
+
+@router.delete("/{job_id}/tasks/{task_key}", response_model=JobRead)
+def delete_task(
+    job_id: int,
+    task_key: str,
+    _user: User = Depends(require_roles("admin", "office")),
+    db: Session = Depends(get_db),
+) -> JobRead:
+    task = jobs_repo.get_task(db, job_id=job_id, task_key=task_key)
+    if task is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Task '{task_key}' not found on job {job_id}",
+        )
+    jobs_repo.delete_job_task(db, task=task)
+    job = jobs_repo.get_job(db, job_id)
+    assert job is not None
+    return to_job_read(job)
+
+
 @router.patch("/{job_id}/tasks/{task_key}", response_model=JobRead)
 def update_task(
     job_id: int,
@@ -179,3 +389,35 @@ def update_task(
     job = jobs_repo.get_job(db, job_id)
     assert job is not None
     return to_job_read(job)
+
+
+@router.get("/job-type-task-templates", response_model=List[JobTypeTaskTemplateRead])
+def list_task_templates(
+    job_type: str,
+    _user: User = Depends(require_roles("admin", "office")),
+    db: Session = Depends(get_db),
+) -> List[JobTypeTaskTemplateRead]:
+    if job_type not in VALID_JOB_TYPES:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"job_type must be one of {sorted(VALID_JOB_TYPES)}",
+        )
+    return jobs_repo.list_job_type_task_templates(db, job_type=job_type)
+
+
+@router.post(
+    "/job-type-task-templates",
+    response_model=JobTypeTaskTemplateRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_task_template(
+    payload: JobTypeTaskTemplateCreate,
+    _user: User = Depends(require_roles("admin", "office")),
+    db: Session = Depends(get_db),
+) -> JobTypeTaskTemplateRead:
+    row = jobs_repo.add_job_type_task_template(
+        db,
+        job_type=payload.job_type,
+        task_label=payload.task_label,
+    )
+    return row

@@ -13,12 +13,37 @@ const state = {
   jobs: [],
   jobsById: new Map(),
   filter: "",
+  jobTypeFilter: "all",
   /** @type {"cards" | "overview"} */
   view: "cards",
   notifications: [],
   unbilledNotificationCount: 0,
   /** @type {Array<{id:number,label?:string,name?:string,phone?:string,email?:string}>} */
   contactsCatalog: [],
+};
+
+const POLL_BASE_INTERVAL_MS = 5000;
+const POLL_MAX_BACKOFF_MS = 60000;
+
+const poller = {
+  timerId: null,
+  active: false,
+  channels: {
+    jobs: { inFlight: false, failCount: 0, lastSig: "" },
+    notifications: { inFlight: false, failCount: 0, lastSig: "" },
+    feedbackMine: { inFlight: false, failCount: 0, lastSig: "" },
+    feedbackAll: { inFlight: false, failCount: 0, lastSig: "" },
+    users: { inFlight: false, failCount: 0, lastSig: "" },
+    contacts: { inFlight: false, failCount: 0, lastSig: "" },
+  },
+};
+
+const JOB_TYPE_LABELS = {
+  all: "All",
+  sales: "Sales",
+  new_construction: "New Construction",
+  renovation: "Renovation",
+  misc: "Misc.",
 };
 
 const docsModalState = {
@@ -39,6 +64,10 @@ const PHOTOS_MODAL_PAGE_SIZE = 12;
 const photoViewerState = {
   objectUrl: null,
   loadSeq: 0,
+  /** @type {number|null} */
+  jobId: null,
+  /** @type {number|null} */
+  photoIndex: null,
 };
 
 const photoViewerGesture = {
@@ -51,6 +80,13 @@ const photoViewerGesture = {
   lastClientX: 0,
   lastClientY: 0,
   mousePanning: false,
+  /** Largest number of simultaneous touches in the current gesture (for swipe vs pinch). */
+  maxTouchesInGesture: 0,
+  swipeStartX: 0,
+  swipeStartY: 0,
+  swipeTouchId: 0,
+  /** Ignore synthetic clicks shortly after a swipe navigation (mobile). */
+  ignoreNextClickUntil: 0,
 };
 
 // Card-back thumbnail grid: 4 columns x 2 rows.
@@ -78,6 +114,16 @@ function truncateJobNotesPreview(text, maxLen = JOB_NOTES_PREVIEW_MAX) {
   return { text: full.slice(0, maxLen) + "…", truncated: true, full };
 }
 
+/**
+ * @param {string|null|undefined} address
+ * @returns {string} Google Maps search URL, or "" if empty after trim.
+ */
+function googleMapsSearchUrl(address) {
+  const q = String(address ?? "").trim();
+  if (!q) return "";
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}`;
+}
+
 function jobHasContacts(job) {
   return Array.isArray(job.contacts) && job.contacts.length > 0;
 }
@@ -85,6 +131,7 @@ function jobHasContacts(job) {
 async function refreshContactsCatalog() {
   try {
     state.contactsCatalog = await apiClient.listContacts();
+    poller.channels.contacts.lastSig = simpleSignature(state.contactsCatalog);
   } catch {
     state.contactsCatalog = [];
   }
@@ -658,6 +705,12 @@ function canEditJobNotes() {
   return Boolean(state.user?.role);
 }
 
+function canDeleteJobNote(note) {
+  if (!note) return false;
+  if (state.user?.role === "admin") return true;
+  return Number(note.author_user_id) === Number(state.user?.id);
+}
+
 function canArchive() {
   return state.user?.role === "admin";
 }
@@ -673,6 +726,10 @@ function canManageUsers() {
 function canViewBillingNotifications() {
   const role = state.user?.role;
   return role === "admin" || role === "office";
+}
+
+function canViewSalesJobs() {
+  return state.user?.role !== "field";
 }
 
 function closeUserMenu() {
@@ -733,6 +790,236 @@ function setNotificationsState(items) {
   renderUserMenuBadge();
 }
 
+function channelBackoffMs(ch) {
+  const exp = Math.max(0, Number(ch.failCount || 0));
+  return Math.min(POLL_MAX_BACKOFF_MS, POLL_BASE_INTERVAL_MS * (2 ** exp));
+}
+
+function isChannelDue(ch) {
+  const now = Date.now();
+  if (!ch.nextRunAt || now >= ch.nextRunAt) return true;
+  return false;
+}
+
+function markChannelSuccess(ch) {
+  ch.failCount = 0;
+  ch.nextRunAt = Date.now() + POLL_BASE_INTERVAL_MS;
+}
+
+function markChannelFailure(ch) {
+  ch.failCount = Math.min(6, Number(ch.failCount || 0) + 1);
+  ch.nextRunAt = Date.now() + channelBackoffMs(ch);
+}
+
+function jobsSignature(list) {
+  if (!Array.isArray(list)) return "";
+  const compact = list.map((j) => ({
+    id: j.id,
+    archived: j.archived,
+    updated_at: j.updated_at,
+    permit_status: j.permit_status,
+    notes: j.notes,
+    tasks: Array.isArray(j.tasks)
+      ? j.tasks.map((t) => [t.id, t.status, t.value, t.note, t.completed_at, t.completed_by, t.sort_order])
+      : [],
+    documents: Array.isArray(j.documents)
+      ? j.documents.map((d) => [d.id, d.title, d.uploaded_at, d.category, d.size_bytes])
+      : [],
+    photos: Array.isArray(j.photos) ? j.photos.map((p) => [p.id, p.uploaded_at, p.size_bytes]) : [],
+    contacts: Array.isArray(j.contacts)
+      ? j.contacts.map((c) => [c.id, c.label, c.name, c.phone, c.email])
+      : [],
+    job_notes: Array.isArray(j.job_notes)
+      ? j.job_notes.map((n) => [n.id, n.author_user_id, n.created_at, n.body])
+      : [],
+  }));
+  return JSON.stringify(compact);
+}
+
+function simpleSignature(list) {
+  if (!Array.isArray(list)) return "";
+  return JSON.stringify(list);
+}
+
+function refreshOpenJobBoundModalsAfterSync() {
+  const docsModal = $("#docs-modal");
+  if (docsModal && !docsModal.hidden && docsModalState.jobId != null) {
+    const j = getJobById(docsModalState.jobId);
+    if (j) renderDocsModalContent(j);
+  }
+  const contactsModal = $("#contacts-modal");
+  if (contactsModal && !contactsModal.hidden && contactsModalState.jobId != null) {
+    const j = getJobById(contactsModalState.jobId);
+    if (j) renderContactsModalContent(j);
+  }
+  const photosModal = $("#photos-modal");
+  if (photosModal && !photosModal.hidden && photosModalState.jobId != null) {
+    const j = getJobById(photosModalState.jobId);
+    if (j) renderPhotosModalContent(j);
+  }
+}
+
+async function pollJobsChannel() {
+  const ch = poller.channels.jobs;
+  if (ch.inFlight || !isChannelDue(ch)) return;
+  ch.inFlight = true;
+  try {
+    const jobs = await apiClient.listJobs();
+    const sig = jobsSignature(jobs);
+    if (sig !== ch.lastSig) {
+      ch.lastSig = sig;
+      state.jobs = jobs;
+      state.jobsById = new Map(jobs.map((j) => [j.id, j]));
+      renderAll();
+      refreshOpenJobBoundModalsAfterSync();
+    }
+    markChannelSuccess(ch);
+  } catch {
+    markChannelFailure(ch);
+  } finally {
+    ch.inFlight = false;
+  }
+}
+
+async function pollNotificationsChannel() {
+  if (!canViewBillingNotifications()) return;
+  const ch = poller.channels.notifications;
+  if (ch.inFlight || !isChannelDue(ch)) return;
+  ch.inFlight = true;
+  try {
+    const items = await apiClient.listNotifications();
+    const sig = simpleSignature(items);
+    if (sig !== ch.lastSig) {
+      ch.lastSig = sig;
+      setNotificationsState(items);
+      const notificationsModal = $("#notifications-modal");
+      if (notificationsModal && !notificationsModal.hidden) {
+        await refreshNotificationsModal();
+      }
+    }
+    markChannelSuccess(ch);
+  } catch {
+    markChannelFailure(ch);
+  } finally {
+    ch.inFlight = false;
+  }
+}
+
+async function pollFeedbackChannel() {
+  const mine = poller.channels.feedbackMine;
+  if (!mine.inFlight && isChannelDue(mine)) {
+    mine.inFlight = true;
+    try {
+      const items = await apiClient.listMyFeedback();
+      const sig = simpleSignature(items);
+      if (sig !== mine.lastSig) {
+        mine.lastSig = sig;
+        const modal = $("#feedback-modal");
+        if (modal && !modal.hidden) await refreshFeedbackMineList();
+      }
+      markChannelSuccess(mine);
+    } catch {
+      markChannelFailure(mine);
+    } finally {
+      mine.inFlight = false;
+    }
+  }
+
+  if (!canManageUsers()) return;
+  const all = poller.channels.feedbackAll;
+  if (all.inFlight || !isChannelDue(all)) return;
+  all.inFlight = true;
+  try {
+    const items = await apiClient.listAllFeedback();
+    const sig = simpleSignature(items);
+    if (sig !== all.lastSig) {
+      all.lastSig = sig;
+      const modal = $("#feedback-review-modal");
+      if (modal && !modal.hidden) await refreshFeedbackReviewModal();
+    }
+    markChannelSuccess(all);
+  } catch {
+    markChannelFailure(all);
+  } finally {
+    all.inFlight = false;
+  }
+}
+
+async function pollUsersChannel() {
+  if (!canManageUsers()) return;
+  const ch = poller.channels.users;
+  if (ch.inFlight || !isChannelDue(ch)) return;
+  ch.inFlight = true;
+  try {
+    const users = await apiClient.listUsers();
+    const sig = simpleSignature(users);
+    if (sig !== ch.lastSig) {
+      ch.lastSig = sig;
+      const modal = $("#users-modal");
+      if (modal && !modal.hidden) await refreshUsersModal();
+    }
+    markChannelSuccess(ch);
+  } catch {
+    markChannelFailure(ch);
+  } finally {
+    ch.inFlight = false;
+  }
+}
+
+async function pollContactsChannel() {
+  const ch = poller.channels.contacts;
+  if (ch.inFlight || !isChannelDue(ch)) return;
+  ch.inFlight = true;
+  try {
+    const contacts = await apiClient.listContacts();
+    const sig = simpleSignature(contacts);
+    if (sig !== ch.lastSig) {
+      ch.lastSig = sig;
+      state.contactsCatalog = contacts;
+      const directoryModal = $("#contacts-directory-modal");
+      if (directoryModal && !directoryModal.hidden) {
+        await refreshContactsDirectoryModal();
+      }
+    }
+    markChannelSuccess(ch);
+  } catch {
+    markChannelFailure(ch);
+  } finally {
+    ch.inFlight = false;
+  }
+}
+
+async function runPollCycle() {
+  if (!poller.active || document.hidden || !state.token) return;
+  await pollJobsChannel();
+  await pollNotificationsChannel();
+  await pollFeedbackChannel();
+  await pollUsersChannel();
+  await pollContactsChannel();
+}
+
+function scheduleNextPoll(ms = POLL_BASE_INTERVAL_MS) {
+  if (poller.timerId) window.clearTimeout(poller.timerId);
+  poller.timerId = window.setTimeout(async () => {
+    await runPollCycle();
+    if (poller.active) scheduleNextPoll(POLL_BASE_INTERVAL_MS);
+  }, ms);
+}
+
+function startAppPolling() {
+  if (poller.active) return;
+  poller.active = true;
+  scheduleNextPoll(1500);
+}
+
+function stopAppPolling() {
+  poller.active = false;
+  if (poller.timerId) {
+    window.clearTimeout(poller.timerId);
+    poller.timerId = null;
+  }
+}
+
 function renderUserMenuBadge() {
   const badge = $("#user-menu-badge");
   if (!badge) return;
@@ -759,6 +1046,7 @@ async function refreshNotificationBadgeCount() {
   try {
     const items = await apiClient.listNotifications();
     setNotificationsState(items);
+    poller.channels.notifications.lastSig = simpleSignature(items);
   } catch {
     // Keep the last known count if this refresh fails.
   }
@@ -770,6 +1058,7 @@ function authHeaders() {
 }
 
 function logout() {
+  stopAppPolling();
   localStorage.removeItem(TOKEN_KEY);
   state.token = null;
   state.user = null;
@@ -866,10 +1155,35 @@ const apiClient = {
   },
   createJob: (payload) => api("/jobs", { method: "POST", body: payload }),
   updateJob: (id, payload) => api(`/jobs/${id}`, { method: "PATCH", body: payload }),
+  deleteJob: (id) => api(`/jobs/${id}`, { method: "DELETE" }),
+  listJobNotes: (jobId) => api(`/jobs/${jobId}/notes`),
+  createJobNote: (jobId, payload) => api(`/jobs/${jobId}/notes`, { method: "POST", body: payload }),
+  deleteJobNote: async (jobId, noteId) => {
+    const res = await authFetch(`/jobs/${jobId}/notes/${noteId}`, { method: "DELETE" });
+    if (!res.ok) throw new Error(await parseFetchError(res));
+    return true;
+  },
   listContacts: () => api("/contacts"),
   createContact: (payload) => api("/contacts", { method: "POST", body: payload }),
   updateContact: (id, payload) => api(`/contacts/${id}`, { method: "PATCH", body: payload }),
   deleteContact: (id) => api(`/contacts/${id}`, { method: "DELETE" }),
+  addCustomTask: (id, payload) => api(`/jobs/${id}/tasks`, { method: "POST", body: payload }),
+  convertSalesJob: (id, targetJobType) =>
+    api(`/jobs/${id}/convert-sales`, {
+      method: "POST",
+      body: { target_job_type: targetJobType },
+    }),
+  moveJobTask: (id, taskKey, direction) =>
+    api(`/jobs/${id}/tasks/${encodeURIComponent(taskKey)}/move`, {
+      method: "PATCH",
+      body: { direction },
+    }),
+  deleteJobTask: (id, taskKey) =>
+    api(`/jobs/${id}/tasks/${encodeURIComponent(taskKey)}`, { method: "DELETE" }),
+  listTaskTemplates: (jobType) =>
+    api(`/jobs/job-type-task-templates?job_type=${encodeURIComponent(jobType)}`),
+  createTaskTemplate: (payload) =>
+    api("/jobs/job-type-task-templates", { method: "POST", body: payload }),
   updateTask: (id, taskKey, payload) =>
     api(`/jobs/${id}/tasks/${encodeURIComponent(taskKey)}`, { method: "PATCH", body: payload }),
   listUsers: () => api("/users"),
@@ -996,6 +1310,7 @@ function renderFront(job) {
 
   const badges = [
     el("span", { class: "card__status-badge" }, statusLabel(overall_status)),
+    el("span", { class: "card__jobtype-badge" }, jobTypeLabel(job.job_type)),
   ];
   if (job.archived) {
     badges.push(el("span", { class: "card__archived-badge", title: "Archived" }, "Archived"));
@@ -1105,6 +1420,21 @@ function statusLabel(status) {
     default:
       return "Not started";
   }
+}
+
+function normalizeJobType(v) {
+  const raw = String(v || "").trim().toLowerCase();
+  if (
+    raw === "sales" ||
+    raw === "new_construction" ||
+    raw === "renovation" ||
+    raw === "misc"
+  ) return raw;
+  return "new_construction";
+}
+
+function jobTypeLabel(jobType) {
+  return JOB_TYPE_LABELS[normalizeJobType(jobType)] || "New Construction";
 }
 
 // ---- Job documents (PDFs) -----------------------------------------------
@@ -1318,10 +1648,22 @@ function renderJobDocs(job) {
         el("option", { value: "permit" }, "Permit Docs"),
       ]
     );
+    const uploadStatus = el(
+      "div",
+      { class: "job-docs__upload-status", hidden: true, "aria-live": "polite" },
+      [
+        el("span", { class: "upload-spinner", "aria-hidden": "true" }),
+        el("span", {}, "Uploading…"),
+      ]
+    );
     fileInput.addEventListener("change", async () => {
       const files = fileInput.files;
       if (!files?.length) return;
       try {
+        uploadStatus.hidden = false;
+        fileInput.disabled = true;
+        titleInput.disabled = true;
+        categoryInput.disabled = true;
         const updated = await apiClient.uploadJobDocument(
           job.id,
           files,
@@ -1330,12 +1672,16 @@ function renderJobDocs(job) {
         );
         replaceJob(updated);
         const count = files.length;
-        fileInput.value = "";
         titleInput.value = "";
         categoryInput.value = "field";
         toast(count === 1 ? "PDF added" : `${count} PDFs added`, "success");
       } catch (err) {
         toast(`Upload failed: ${err.message}`, "error");
+      } finally {
+        uploadStatus.hidden = true;
+        fileInput.disabled = false;
+        titleInput.disabled = false;
+        categoryInput.disabled = false;
         fileInput.value = "";
       }
     });
@@ -1344,12 +1690,108 @@ function renderJobDocs(job) {
         categoryInput,
         titleInput,
         fileInput,
+        uploadStatus,
         el("span", { class: "job-docs__upload-hint" }, "PDF only — choose a file to upload."),
       ])
     );
   }
 
   return el("section", { class: "job-docs", "aria-label": "Job documents" }, children);
+}
+
+function renderJobNotesFeed(job) {
+  const notes = Array.isArray(job.job_notes) ? job.job_notes : [];
+  const body = el("div", { class: "job-notes-feed__body" });
+  const list = el("ul", { class: "job-notes-feed__list" });
+  if (!notes.length) {
+    list.appendChild(el("li", { class: "job-notes-feed__empty" }, "No notes yet."));
+  } else {
+    for (const note of notes) {
+      const authoredBy = note.author_username || `User #${note.author_user_id}`;
+      const when = fmtDateTime(note.created_at);
+      const headerBits = [authoredBy];
+      if (when) headerBits.push(when);
+      const row = el("li", { class: "job-notes-feed__item" }, [
+        el("div", { class: "job-notes-feed__meta" }, headerBits.join(" · ")),
+        el("p", { class: "job-notes-feed__text" }, note.body || ""),
+      ]);
+      if (canDeleteJobNote(note)) {
+        row.appendChild(
+          el(
+            "button",
+            {
+              type: "button",
+              class: "btn btn--ghost btn--sm",
+              onclick: async (e) => {
+                e.stopPropagation();
+                if (!confirm("Delete this note?")) return;
+                try {
+                  await apiClient.deleteJobNote(job.id, note.id);
+                  const refreshed = await apiClient.listJobNotes(job.id);
+                  const updated = { ...job, job_notes: refreshed };
+                  replaceJob(updated);
+                  toast("Note deleted", "success");
+                } catch (err) {
+                  toast(`Failed to delete note: ${err.message}`, "error");
+                }
+              },
+            },
+            "Delete"
+          )
+        );
+      }
+      list.appendChild(row);
+    }
+  }
+  body.appendChild(list);
+
+  if (canEditJobNotes()) {
+    const textarea = el("textarea", {
+      class: "job-notes-feed__composer",
+      rows: "3",
+      placeholder: "Add a timestamped note...",
+      onclick: (e) => e.stopPropagation(),
+      onkeydown: async (e) => {
+        if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+          e.preventDefault();
+          e.currentTarget.nextElementSibling?.click();
+        }
+      },
+    });
+    const submit = el(
+      "button",
+      {
+        type: "button",
+        class: "btn btn--primary btn--sm",
+        onclick: async (e) => {
+          e.stopPropagation();
+          const bodyText = String(textarea.value || "").trim();
+          if (!bodyText) {
+            toast("Note cannot be empty", "error");
+            return;
+          }
+          try {
+            await apiClient.createJobNote(job.id, { body: bodyText });
+            const refreshed = await apiClient.listJobNotes(job.id);
+            const updated = { ...job, job_notes: refreshed };
+            replaceJob(updated);
+            toast("Note added", "success");
+          } catch (err) {
+            toast(`Failed to add note: ${err.message}`, "error");
+          }
+        },
+      },
+      "Add Note"
+    );
+    body.appendChild(el("div", { class: "job-notes-feed__composer-wrap" }, [textarea, submit]));
+  }
+
+  return el("section", { class: "job-notes-feed", "aria-label": "Job notes feed" }, [
+    el("details", { class: "job-notes-feed__accordion" }, [
+      el("summary", { class: "job-notes-feed__accordion-summary" }, `Job Notes (${notes.length})`),
+      body,
+    ]),
+  ]);
 }
 
 function renderJobPhotos(job) {
@@ -1473,13 +1915,40 @@ function renderJobContacts(job) {
 function renderBack(job) {
   const list = el("ul", { class: "tasklist" });
 
-  for (const task of job.tasks) {
-    list.appendChild(renderTaskRow(job, task));
+  for (let i = 0; i < job.tasks.length; i += 1) {
+    const task = job.tasks[i];
+    list.appendChild(renderTaskRow(job, task, i, job.tasks.length));
   }
+
+  const customTaskTools = canCreateJob()
+    ? el("div", { class: "tasklist__tools" }, [
+        el(
+          "button",
+          {
+            type: "button",
+            class: "btn btn--ghost btn--sm",
+            onclick: async (e) => {
+              e.stopPropagation();
+              const raw = prompt("Custom task label");
+              const taskLabel = String(raw || "").trim();
+              if (!taskLabel) return;
+              try {
+                const updated = await apiClient.addCustomTask(job.id, { task_label: taskLabel });
+                replaceJob(updated);
+                toast("Custom task added", "success");
+              } catch (err) {
+                toast(`Failed to add custom task: ${err.message}`, "error");
+              }
+            },
+          },
+          "+ Custom Task"
+        ),
+      ])
+    : null;
 
   const notesEditable = canEditJobNotes();
   const notes = el("div", { class: "notes" }, [
-    el("label", { for: `notes-${job.id}` }, "Job Notes"),
+    el("label", { for: `notes-${job.id}` }, "Job Description"),
     el("textarea", {
       id: `notes-${job.id}`,
       placeholder: "Issues, gate codes, customer preferences...",
@@ -1498,9 +1967,9 @@ function renderBack(job) {
         try {
           const updated = await apiClient.updateJob(job.id, { notes: newVal });
           replaceJob(updated);
-          toast("Notes saved", "success");
+          toast("Job description saved", "success");
         } catch (err) {
-          toast(`Failed to save notes: ${err.message}`, "error");
+          toast(`Failed to save job description: ${err.message}`, "error");
         }
       },
     }, job.notes || ""),
@@ -1534,6 +2003,40 @@ function renderBack(job) {
       )
     );
   }
+  if (canCreateJob() && normalizeJobType(job.job_type) === "sales") {
+    headerRight.push(
+      el(
+        "button",
+        {
+          type: "button",
+          class: "btn btn--ghost",
+          title: "Convert Sales job to build type",
+          onclick: async (e) => {
+            e.stopPropagation();
+            const raw = prompt(
+              "Convert Sales job to which type? Enter: new_construction, renovation, or misc",
+              "new_construction"
+            );
+            const target = String(raw || "").trim().toLowerCase();
+            if (!target) return;
+            if (!["new_construction", "renovation", "misc"].includes(target)) {
+              toast("Use new_construction, renovation, or misc", "error");
+              return;
+            }
+            if (!confirm(`Convert this Sales job to ${jobTypeLabel(target)}?`)) return;
+            try {
+              await apiClient.convertSalesJob(job.id, target);
+              await loadJobs();
+              toast(`Created ${jobTypeLabel(target)} job copy`, "success");
+            } catch (err) {
+              toast(`Failed to convert job: ${err.message}`, "error");
+            }
+          },
+        },
+        "Convert"
+      )
+    );
+  }
   if (canArchive()) {
     headerRight.push(
       el(
@@ -1560,6 +2063,21 @@ function renderBack(job) {
     );
   }
 
+  const addressTrimmed = String(job.address ?? "").trim();
+  const addressValueEl = addressTrimmed
+    ? el(
+        "a",
+        {
+          class: "back__jobinfo-value back__jobinfo-value--link",
+          href: googleMapsSearchUrl(job.address),
+          target: "_blank",
+          rel: "noopener noreferrer",
+          title: job.address || "",
+        },
+        job.address
+      )
+    : el("span", { class: "back__jobinfo-value", title: "" }, "No address");
+
   return el("div", { class: "face face--back" }, [
     el("header", { class: "back__header" }, [
       el("div", { class: "back__header-main" }, [
@@ -1567,11 +2085,7 @@ function renderBack(job) {
         el("div", { class: "back__jobinfo" }, [
           el("p", { class: "back__jobinfo-row" }, [
             el("span", { class: "back__jobinfo-label" }, "Job Address"),
-            el(
-              "span",
-              { class: "back__jobinfo-value", title: job.address || "" },
-              job.address || "No address"
-            ),
+            addressValueEl,
           ]),
           el("p", { class: "back__jobinfo-row" }, [
             el("span", { class: "back__jobinfo-label" }, "Permit Number"),
@@ -1589,7 +2103,9 @@ function renderBack(job) {
       notes,
       jobHasContacts(job) ? renderJobContacts(job) : null,
       renderJobDocs(job),
+      renderJobNotesFeed(job),
       renderJobPhotos(job),
+      customTaskTools,
       list,
     ]),
     el("footer", { class: "back__footer" }, [
@@ -1614,7 +2130,7 @@ function renderBack(job) {
   ]);
 }
 
-function renderTaskRow(job, task) {
+function renderTaskRow(job, task, taskIndex, totalTasks) {
   const isCompleted = task.status === "completed";
   const isIssue = task.status === "issue";
 
@@ -1797,6 +2313,78 @@ function renderTaskRow(job, task) {
     },
     isIssue ? "! Issue" : "Flag"
   );
+  const canManageTaskList = canCreateJob();
+  const moveUpBtn = canManageTaskList
+    ? el(
+        "button",
+        {
+          type: "button",
+          class: "btn btn--ghost btn--sm task__manage-btn",
+          disabled: taskIndex <= 0 ? true : null,
+          title: "Move task up",
+          onclick: async (e) => {
+            e.stopPropagation();
+            try {
+              const updated = await apiClient.moveJobTask(job.id, task.task_key, "up");
+              replaceJob(updated);
+            } catch (err) {
+              toast(`Failed to move task: ${err.message}`, "error");
+            }
+          },
+        },
+        "↑"
+      )
+    : null;
+  const moveDownBtn = canManageTaskList
+    ? el(
+        "button",
+        {
+          type: "button",
+          class: "btn btn--ghost btn--sm task__manage-btn",
+          disabled: taskIndex >= totalTasks - 1 ? true : null,
+          title: "Move task down",
+          onclick: async (e) => {
+            e.stopPropagation();
+            try {
+              const updated = await apiClient.moveJobTask(job.id, task.task_key, "down");
+              replaceJob(updated);
+            } catch (err) {
+              toast(`Failed to move task: ${err.message}`, "error");
+            }
+          },
+        },
+        "↓"
+      )
+    : null;
+  const deleteBtn = canManageTaskList
+    ? el(
+        "button",
+        {
+          type: "button",
+          class: "btn btn--ghost btn--sm task__manage-btn task__manage-btn--danger",
+          title: "Delete task",
+          onclick: async (e) => {
+            e.stopPropagation();
+            if (!confirm(`Delete task "${task.task_label}"?`)) return;
+            try {
+              const updated = await apiClient.deleteJobTask(job.id, task.task_key);
+              replaceJob(updated);
+              await refreshNotificationBadgeCount();
+              toast("Task deleted", "success");
+            } catch (err) {
+              toast(`Failed to delete task: ${err.message}`, "error");
+            }
+          },
+        },
+        "Delete"
+      )
+    : null;
+  const taskActions = el("div", { class: "task__actions" }, [
+    issueBtn,
+    moveUpBtn,
+    moveDownBtn,
+    deleteBtn,
+  ]);
 
   return el(
     "li",
@@ -1804,7 +2392,7 @@ function renderTaskRow(job, task) {
     [
       checkbox,
       el("div", { class: "task__main" }, [
-        el("div", { class: "task__label" }, [el("span", {}, task.task_label), issueBtn]),
+        el("div", { class: "task__label" }, [el("span", {}, task.task_label), taskActions]),
         el("div", { class: "task__inputs" }, [dateWrap, noteInput]),
       ]),
     ]
@@ -1822,7 +2410,11 @@ function renderCard(job) {
     "article",
     {
       class: "card",
-      dataset: { status: job.overall_status, id: String(job.id) },
+      dataset: {
+        status: job.overall_status,
+        id: String(job.id),
+        jobType: normalizeJobType(job.job_type),
+      },
     },
     [inner]
   );
@@ -2231,6 +2823,22 @@ function replaceJob(updatedJob) {
   reorderCardsByCompletion();
 }
 
+function removeJob(jobId) {
+  const id = Number(jobId);
+  if (!id) return;
+  state.jobs = state.jobs.filter((j) => j.id !== id);
+  state.jobsById.delete(id);
+  const card = document.querySelector(`.card[data-id="${id}"]`);
+  if (card) card.remove();
+  if (docsModalState.jobId === id) closeDocsModal();
+  if (photosModalState.jobId === id) closePhotosModal();
+  if (contactsModalState.jobId === id) closeContactsModal();
+  if (state.view === "overview") {
+    renderOverviewBars();
+  }
+  applyFilter();
+}
+
 function updateEmptyStateMessage() {
   const empty = $("#empty-state");
   if (!empty) return;
@@ -2253,6 +2861,7 @@ function renderAll() {
 
   if (!state.jobs.length) {
     $("#empty-state").hidden = false;
+    refreshJobTypeTabs();
     applyFilter();
     return;
   }
@@ -2264,33 +2873,33 @@ function renderAll() {
     for (const job of sortedJobsByCompletionDesc()) frag.appendChild(renderCard(job));
     grid.appendChild(frag);
   }
+  refreshJobTypeTabs();
   applyFilter();
+}
+
+function jobMatchesActiveFilters(job, q) {
+  const matchesSearch = !q || jobSearchHay(job).includes(q);
+  const activeType = state.jobTypeFilter || "all";
+  if (activeType === "all") return matchesSearch;
+  return matchesSearch && normalizeJobType(job.job_type) === activeType;
 }
 
 function applyFilter() {
   const q = state.filter.trim().toLowerCase();
   if (state.view === "overview") {
     for (const row of $$(".overview-row")) {
-      if (!q) {
-        row.style.display = "";
-        continue;
-      }
       const id = Number(row.dataset.id);
       const job = state.jobsById.get(id);
       if (!job) continue;
-      row.style.display = jobSearchHay(job).includes(q) ? "" : "none";
+      row.style.display = jobMatchesActiveFilters(job, q) ? "" : "none";
     }
     return;
   }
   for (const card of $$(".card")) {
-    if (!q) {
-      card.style.display = "";
-      continue;
-    }
     const id = Number(card.dataset.id);
     const job = state.jobsById.get(id);
     if (!job) continue;
-    card.style.display = jobSearchHay(job).includes(q) ? "" : "none";
+    card.style.display = jobMatchesActiveFilters(job, q) ? "" : "none";
   }
 }
 
@@ -2591,11 +3200,30 @@ function closePhotoViewer() {
   const loading = $("#photo-viewer-loading");
   if (loading) loading.hidden = true;
   resetPhotoViewerTransform();
+  photoViewerState.jobId = null;
+  photoViewerState.photoIndex = null;
+  photoViewerGesture.maxTouchesInGesture = 0;
 }
 
 function isPhotoViewerOpen() {
   const o = $("#photo-viewer-overlay");
   return o && !o.hidden;
+}
+
+/** @param {-1|1} delta -1 = previous photo, +1 = next (after swipe left). */
+function navigatePhotoViewerBySwipe(delta) {
+  if (!isPhotoViewerOpen() || photoViewerState.jobId == null || photoViewerState.photoIndex == null) return;
+  const job = getJobById(photoViewerState.jobId);
+  const photos = Array.isArray(job?.photos) ? job.photos : [];
+  if (!job || photos.length < 2) return;
+  const cur = photoViewerState.photoIndex;
+  const next = cur + delta;
+  if (next < 0 || next >= photos.length) return;
+  photoViewerGesture.ignoreNextClickUntil = performance.now() + 450;
+  photosModalState.selectedIndex = next;
+  photosModalState.pageIndex = Math.floor(next / PHOTOS_MODAL_PAGE_SIZE);
+  renderPhotosModalContent(job);
+  void openPhotoViewer(job, next);
 }
 
 function initPhotoViewerGesturesOnce() {
@@ -2605,18 +3233,30 @@ function initPhotoViewerGesturesOnce() {
 
   const MIN_SCALE = 1;
   const MAX_SCALE = 5;
+  const SWIPE_MIN_PX = 52;
+  const SWIPE_DOMINANCE = 1.25;
 
   stage.addEventListener(
     "touchstart",
     (e) => {
+      photoViewerGesture.maxTouchesInGesture = Math.max(
+        photoViewerGesture.maxTouchesInGesture,
+        e.touches.length
+      );
       if (e.touches.length === 2) {
         photoViewerGesture.panning = false;
         photoViewerGesture.pinchStartDist = touchDistance(e.touches[0], e.touches[1]);
         photoViewerGesture.pinchStartScale = photoViewerGesture.scale;
       } else if (e.touches.length === 1) {
         photoViewerGesture.panning = true;
-        photoViewerGesture.lastClientX = e.touches[0].clientX;
-        photoViewerGesture.lastClientY = e.touches[0].clientY;
+        const t = e.touches[0];
+        photoViewerGesture.lastClientX = t.clientX;
+        photoViewerGesture.lastClientY = t.clientY;
+        if (photoViewerGesture.scale <= MIN_SCALE) {
+          photoViewerGesture.swipeStartX = t.clientX;
+          photoViewerGesture.swipeStartY = t.clientY;
+          photoViewerGesture.swipeTouchId = t.identifier;
+        }
       }
     },
     { passive: true }
@@ -2625,6 +3265,10 @@ function initPhotoViewerGesturesOnce() {
   stage.addEventListener(
     "touchmove",
     (e) => {
+      photoViewerGesture.maxTouchesInGesture = Math.max(
+        photoViewerGesture.maxTouchesInGesture,
+        e.touches.length
+      );
       if (e.touches.length === 2) {
         e.preventDefault();
         const d = touchDistance(e.touches[0], e.touches[1]);
@@ -2651,14 +3295,46 @@ function initPhotoViewerGesturesOnce() {
     { passive: false }
   );
 
-  stage.addEventListener("touchend", (e) => {
-    if (e.touches.length < 2) {
-      photoViewerGesture.pinchStartDist = 0;
-    }
-    if (e.touches.length === 0) {
-      photoViewerGesture.panning = false;
-    }
-  });
+  stage.addEventListener(
+    "touchend",
+    (e) => {
+      if (e.touches.length < 2) {
+        photoViewerGesture.pinchStartDist = 0;
+      }
+      if (e.touches.length === 0) {
+        photoViewerGesture.panning = false;
+
+        if (
+          photoViewerGesture.maxTouchesInGesture < 2 &&
+          photoViewerGesture.scale <= MIN_SCALE &&
+          isPhotoViewerOpen() &&
+          photoViewerState.photoIndex != null
+        ) {
+          let t0 = null;
+          for (let i = 0; i < e.changedTouches.length; i++) {
+            const c = e.changedTouches[i];
+            if (c.identifier === photoViewerGesture.swipeTouchId) {
+              t0 = c;
+              break;
+            }
+          }
+          if (!t0 && e.changedTouches.length) t0 = e.changedTouches[0];
+          if (t0) {
+            const dx = t0.clientX - photoViewerGesture.swipeStartX;
+            const dy = t0.clientY - photoViewerGesture.swipeStartY;
+            if (
+              Math.abs(dx) >= SWIPE_MIN_PX &&
+              Math.abs(dx) >= Math.abs(dy) * SWIPE_DOMINANCE
+            ) {
+              navigatePhotoViewerBySwipe(dx < 0 ? 1 : -1);
+            }
+          }
+        }
+        photoViewerGesture.maxTouchesInGesture = 0;
+      }
+    },
+    { passive: true }
+  );
 
   stage.addEventListener("wheel", (e) => {
     e.preventDefault();
@@ -2701,6 +3377,11 @@ function initPhotoViewerGesturesOnce() {
   });
 
   stage.addEventListener("click", (e) => {
+    if (performance.now() < photoViewerGesture.ignoreNextClickUntil) {
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
     const loading = $("#photo-viewer-loading");
     if (loading && !loading.hidden) return;
     if (e.target.closest(".photo-viewer__transform")) return;
@@ -2719,6 +3400,9 @@ async function openPhotoViewer(job, index) {
   const img = $("#photo-viewer-img");
   const loading = $("#photo-viewer-loading");
   if (!overlay || !img) return;
+
+  photoViewerState.jobId = job.id;
+  photoViewerState.photoIndex = index;
 
   const reqId = photoViewerState.loadSeq;
 
@@ -2860,14 +3544,28 @@ function renderPhotosModalUpload(job) {
 
   async function handleFiles(files) {
     if (!files?.length || !photosModalState.jobId) return;
-    const result = await uploadJobPhotosSequential(photosModalState.jobId, files);
-    toastJobPhotosUploadResult(result);
-    if (result.lastUpdated) {
-      photosModalState.selectedIndex = Math.max(0, (result.lastUpdated.photos?.length || 1) - 1);
-      photosModalState.pageIndex = Math.floor(photosModalState.selectedIndex / PHOTOS_MODAL_PAGE_SIZE);
-      renderPhotosModalContent(result.lastUpdated);
+    const overlay = $("#photos-modal-upload-overlay");
+    const statusText = $("#photos-modal-upload-status-text");
+    try {
+      uploadWrap.setAttribute("aria-busy", "true");
+      if (dropZone) dropZone.classList.add("is-uploading");
+      if (overlay) overlay.hidden = false;
+      if (statusText) statusText.textContent = "Uploading…";
+      fileInput.disabled = true;
+      const result = await uploadJobPhotosSequential(photosModalState.jobId, files);
+      toastJobPhotosUploadResult(result);
+      if (result.lastUpdated) {
+        photosModalState.selectedIndex = Math.max(0, (result.lastUpdated.photos?.length || 1) - 1);
+        photosModalState.pageIndex = Math.floor(photosModalState.selectedIndex / PHOTOS_MODAL_PAGE_SIZE);
+        renderPhotosModalContent(result.lastUpdated);
+      }
+    } finally {
+      uploadWrap.removeAttribute("aria-busy");
+      if (dropZone) dropZone.classList.remove("is-uploading");
+      if (overlay) overlay.hidden = true;
+      fileInput.disabled = false;
+      fileInput.value = "";
     }
-    fileInput.value = "";
   }
 
   fileInput.addEventListener("change", async () => {
@@ -3019,6 +3717,7 @@ async function openEditJobModal(job) {
   closeContactsModal();
   idInput.value = String(job.id);
   form.elements.namedItem("customer_name").value = job.customer_name || "";
+  form.elements.namedItem("job_type").value = jobTypeLabel(job.job_type);
   form.elements.namedItem("address").value = job.address || "";
   form.elements.namedItem("pool_type").value = job.pool_type || "";
   form.elements.namedItem("permit_status").value = job.permit_status || "";
@@ -3028,6 +3727,8 @@ async function openEditJobModal(job) {
   await refreshContactsCatalog();
   editJobContactIdsOrder = getJobContactIdsFromJob(job);
   renderEditJobContactsPicker();
+  const deleteBtn = $("#edit-job-delete-btn");
+  if (deleteBtn) deleteBtn.hidden = !canEditJobAdmin();
   modal.hidden = false;
   const first = form.querySelector("input[name='customer_name']");
   if (first) setTimeout(() => first.focus(), 30);
@@ -3039,6 +3740,8 @@ function closeEditJobModal() {
   modal.hidden = true;
   $("#edit-job-form")?.reset();
   clearEditJobContactsPanel();
+  const deleteBtn = $("#edit-job-delete-btn");
+  if (deleteBtn) deleteBtn.hidden = true;
   const idInput = $("#edit-job-id");
   if (idInput) idInput.value = "";
 }
@@ -3055,6 +3758,7 @@ function wireModal() {
   const docsModal = $("#docs-modal");
   const contactsModal = $("#contacts-modal");
   const photosModal = $("#photos-modal");
+  const taskTemplatesModal = $("#task-templates-modal");
   const feedbackModal = $("#feedback-modal");
   const feedbackReviewModal = $("#feedback-review-modal");
   const notificationsModal = $("#notifications-modal");
@@ -3115,6 +3819,11 @@ function wireModal() {
   if (contactsDirectoryModal) {
     contactsDirectoryModal.addEventListener("click", (e) => {
       if (e.target.dataset.close === "1") closeContactsDirectoryModal();
+    });
+  }
+  if (taskTemplatesModal) {
+    taskTemplatesModal.addEventListener("click", (e) => {
+      if (e.target.dataset.close === "1") closeTaskTemplatesModal();
     });
   }
   $("#edit-job-contact-search")?.addEventListener("input", () => renderEditJobContactsPicker());
@@ -3243,6 +3952,10 @@ function wireModal() {
       closeUsersModal();
       return;
     }
+    if (taskTemplatesModal && !taskTemplatesModal.hidden) {
+      closeTaskTemplatesModal();
+      return;
+    }
     if (editJobModal && !editJobModal.hidden) {
       closeEditJobModal();
       return;
@@ -3277,6 +3990,10 @@ function wireModal() {
       }
       if (!payload.customer_name) {
         toast("Customer / Job name is required", "error");
+        return;
+      }
+      if (!payload.job_type) {
+        toast("Job type is required", "error");
         return;
       }
       try {
@@ -3338,6 +4055,29 @@ function wireModal() {
       }
     });
   }
+  const editDeleteBtn = $("#edit-job-delete-btn");
+  if (editDeleteBtn) {
+    editDeleteBtn.addEventListener("click", async () => {
+      if (!canEditJobAdmin()) return;
+      const id = Number($("#edit-job-id")?.value);
+      if (!id) {
+        toast("Missing job", "error");
+        return;
+      }
+      const job = getJobById(id);
+      const name = job?.customer_name || "this job";
+      const ok = window.confirm(`Delete "${name}"? This cannot be undone.`);
+      if (!ok) return;
+      try {
+        await apiClient.deleteJob(id);
+        closeEditJobModal();
+        removeJob(id);
+        toast("Job deleted", "success");
+      } catch (err) {
+        toast(`Failed to delete job: ${err.message}`, "error");
+      }
+    });
+  }
 }
 
 function openFeedbackModal() {
@@ -3358,6 +4098,7 @@ async function refreshFeedbackMineList() {
   wrap.textContent = "Loading…";
   try {
     const items = await apiClient.listMyFeedback();
+    poller.channels.feedbackMine.lastSig = simpleSignature(items);
     wrap.innerHTML = "";
     if (!items.length) {
       wrap.appendChild(el("p", { class: "feedback-empty" }, "No submissions yet."));
@@ -3409,6 +4150,7 @@ function openNotificationsModal() {
   closeDocsModal();
   closePhotosModal();
   closeContactsModal();
+  closeTaskTemplatesModal();
   modal.hidden = false;
   refreshNotificationsModal();
 }
@@ -3424,6 +4166,7 @@ async function refreshNotificationsModal() {
   body.textContent = "Loading…";
   try {
     const items = await apiClient.listNotifications();
+    poller.channels.notifications.lastSig = simpleSignature(items);
     setNotificationsState(items);
     body.innerHTML = "";
     if (!state.notifications.length) {
@@ -3507,6 +4250,7 @@ async function refreshFeedbackReviewModal() {
   body.textContent = "Loading…";
   try {
     const items = await apiClient.listAllFeedback();
+    poller.channels.feedbackAll.lastSig = simpleSignature(items);
     body.innerHTML = "";
     if (!items.length) {
       body.appendChild(el("p", { class: "feedback-empty" }, "No submissions yet."));
@@ -3594,6 +4338,7 @@ function openUsersModal() {
   const modal = $("#users-modal");
   if (!modal) return;
   closeContactsDirectoryModal();
+  closeTaskTemplatesModal();
   modal.hidden = false;
   refreshUsersModal();
 }
@@ -3603,12 +4348,97 @@ function closeUsersModal() {
   if (modal) modal.hidden = true;
 }
 
+function openTaskTemplatesModal() {
+  const modal = $("#task-templates-modal");
+  if (!modal) return;
+  closeModal();
+  closeEditJobModal();
+  closeDocsModal();
+  closePhotosModal();
+  closeContactsModal();
+  closeFeedbackModal();
+  closeFeedbackReviewModal();
+  closeNotificationsModal();
+  closeUsersModal();
+  closeContactsDirectoryModal();
+  modal.hidden = false;
+  refreshTaskTemplatesModal();
+}
+
+function closeTaskTemplatesModal() {
+  const modal = $("#task-templates-modal");
+  if (modal) modal.hidden = true;
+}
+
+async function refreshTaskTemplatesModal() {
+  const body = $("#task-templates-modal-body");
+  if (!body) return;
+  body.textContent = "Loading…";
+  try {
+    const jobTypes = ["sales", "new_construction", "renovation", "misc"];
+    const lists = await Promise.all(jobTypes.map((jt) => apiClient.listTaskTemplates(jt)));
+    body.innerHTML = "";
+    for (let i = 0; i < jobTypes.length; i += 1) {
+      const jobType = jobTypes[i];
+      const rows = lists[i] || [];
+      const section = el("section", { class: "task-templates__section" }, [
+        el("h3", { class: "users-section-title" }, jobTypeLabel(jobType)),
+      ]);
+      const list = el("ul", { class: "task-templates__list" });
+      if (!rows.length) {
+        list.appendChild(el("li", { class: "task-templates__empty" }, "No custom template tasks yet."));
+      } else {
+        for (const row of rows) {
+          list.appendChild(el("li", { class: "task-templates__item" }, row.task_label));
+        }
+      }
+      const addRow = el("div", { class: "task-templates__add" }, [
+        el("input", {
+          type: "text",
+          class: "task-templates__input",
+          placeholder: "New template task label",
+          maxlength: "128",
+        }),
+        el(
+          "button",
+          {
+            type: "button",
+            class: "btn btn--ghost btn--sm",
+            onclick: async (e) => {
+              const wrap = e.currentTarget.closest(".task-templates__add");
+              const input = wrap?.querySelector("input");
+              const label = String(input?.value || "").trim();
+              if (!label) return;
+              try {
+                await apiClient.createTaskTemplate({ job_type: jobType, task_label: label });
+                if (input) input.value = "";
+                toast("Template task added", "success");
+                await refreshTaskTemplatesModal();
+              } catch (err) {
+                toast(`Failed to add template task: ${err.message}`, "error");
+              }
+            },
+          },
+          "Add"
+        ),
+      ]);
+      section.appendChild(list);
+      section.appendChild(addRow);
+      body.appendChild(section);
+    }
+  } catch (err) {
+    body.textContent = "";
+    body.appendChild(el("p", { class: "users-error" }, `Failed to load templates: ${err.message}`));
+  }
+}
+
 async function refreshUsersModal() {
   const body = $("#users-modal-body");
   if (!body) return;
   body.textContent = "Loading…";
   try {
     const users = await apiClient.listUsers();
+    poller.channels.users.lastSig = simpleSignature(users);
     body.innerHTML = "";
     const addForm = el("div", { class: "users-add" }, [
       el("h3", { class: "users-section-title" }, "Add user"),
@@ -3742,7 +4572,9 @@ function applyRoleVisibility() {
   for (const btn of $$('[data-menu-action="users"]')) btn.hidden = !canManageUsers();
   for (const btn of $$('[data-menu-action="contacts"]')) btn.hidden = !canCreateJob();
   for (const btn of $$('[data-menu-action="review-feedback"]')) btn.hidden = !canManageUsers();
+  for (const btn of $$('[data-menu-action="task-templates"]')) btn.hidden = !canCreateJob();
   for (const btn of $$('[data-menu-action="view-archived"]')) btn.hidden = !canArchive();
+  for (const btn of $$('[data-job-type-filter="sales"]')) btn.hidden = !canViewSalesJobs();
   renderUserMenuBadge();
   setArchivedMenuLabel();
 }
@@ -3754,6 +4586,7 @@ async function loadJobs() {
     const jobs = await apiClient.listJobs();
     state.jobs = jobs;
     state.jobsById = new Map(jobs.map((j) => [j.id, j]));
+    poller.channels.jobs.lastSig = jobsSignature(jobs);
     renderAll();
   } catch (err) {
     toast(`Failed to load jobs: ${err.message}`, "error");
@@ -3765,6 +4598,50 @@ function wireSearch() {
     state.filter = e.target.value || "";
     applyFilter();
   });
+}
+
+function refreshJobTypeTabs() {
+  if (!canViewSalesJobs() && state.jobTypeFilter === "sales") {
+    state.jobTypeFilter = "all";
+  }
+  const counts = {
+    all: state.jobs.length,
+    sales: 0,
+    new_construction: 0,
+    renovation: 0,
+    misc: 0,
+  };
+  for (const job of state.jobs) {
+    const jt = normalizeJobType(job.job_type);
+    counts[jt] = (counts[jt] || 0) + 1;
+  }
+  for (const btn of $$("[data-job-type-filter]")) {
+    const key = btn.dataset.jobTypeFilter || "all";
+    const isSalesBtn = key === "sales";
+    if (isSalesBtn) btn.hidden = !canViewSalesJobs();
+    const label = JOB_TYPE_LABELS[key] || JOB_TYPE_LABELS.all;
+    const count = isSalesBtn && !canViewSalesJobs() ? 0 : (counts[key] ?? 0);
+    btn.textContent = `${label} (${count})`;
+    btn.classList.toggle("is-active", key === state.jobTypeFilter);
+  }
+}
+
+function wireJobTypeTabs() {
+  for (const btn of $$("[data-job-type-filter]")) {
+    btn.addEventListener("click", () => {
+      const selected = btn.dataset.jobTypeFilter || "all";
+      if (selected === "sales" && !canViewSalesJobs()) {
+        state.jobTypeFilter = "all";
+        refreshJobTypeTabs();
+        applyFilter();
+        return;
+      }
+      state.jobTypeFilter = selected;
+      refreshJobTypeTabs();
+      applyFilter();
+    });
+  }
+  refreshJobTypeTabs();
 }
 
 function wireShell() {
@@ -3818,6 +4695,10 @@ function wireShell() {
     },
     "new-job": async () => {
       openModal();
+    },
+    "task-templates": async () => {
+      if (!canCreateJob()) return;
+      openTaskTemplatesModal();
     },
     "view-archived": async () => {
       if (!canArchive()) return;
@@ -3893,10 +4774,12 @@ document.addEventListener("DOMContentLoaded", async () => {
         applyRoleVisibility();
         wireModal();
         wireSearch();
+        wireJobTypeTabs();
         wireShell();
         await loadJobs();
         await refreshContactsCatalog();
         await refreshNotificationBadgeCount();
+        startAppPolling();
         toast(`Signed in as ${state.user.username}`, "success");
       } catch (err) {
         toast(err.message, "error");
@@ -3922,9 +4805,16 @@ document.addEventListener("DOMContentLoaded", async () => {
     applyRoleVisibility();
     wireModal();
     wireSearch();
+    wireJobTypeTabs();
     wireShell();
     await loadJobs();
     await refreshContactsCatalog();
     await refreshNotificationBadgeCount();
+    startAppPolling();
   }
+
+  document.addEventListener("visibilitychange", () => {
+    if (!poller.active) return;
+    if (!document.hidden) scheduleNextPoll(300);
+  });
 });

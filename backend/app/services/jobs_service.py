@@ -18,6 +18,7 @@ from ..models import Job, JobTask
 from ..schemas import (
     JobContactEntry,
     JobDocumentRead,
+    JobNoteRead,
     JobPhotoRead,
     JobProgress,
     JobRead,
@@ -100,6 +101,19 @@ def to_job_read(job: Job) -> JobRead:
         )
         for p in photos_sorted
     ]
+    notes_sorted = sorted(job.job_notes, key=lambda n: (n.created_at, n.id), reverse=True)
+    job_notes = [
+        JobNoteRead(
+            id=n.id,
+            job_id=n.job_id,
+            author_user_id=n.author_user_id,
+            author_username=n.author.username if n.author else None,
+            author_role=n.author.role if n.author else None,
+            body=n.body,
+            created_at=n.created_at,
+        )
+        for n in notes_sorted
+    ]
 
     links_sorted = sorted(job.contact_links, key=lambda x: x.sort_order)
     contacts_out: List[JobContactEntry] = []
@@ -120,6 +134,7 @@ def to_job_read(job: Job) -> JobRead:
     return JobRead(
         id=job.id,
         customer_name=job.customer_name,
+        job_type=job.job_type,
         address=job.address,
         pool_type=job.pool_type,
         permit_status=job.permit_status,
@@ -133,6 +148,7 @@ def to_job_read(job: Job) -> JobRead:
         tasks=[JobTaskRead.model_validate(t) for t in tasks_sorted],
         documents=documents,
         photos=photos,
+        job_notes=job_notes,
         progress=progress,
         overall_status=overall_status,
         docs_rel_path=docs_dir_relative(job.docs_folder_name)

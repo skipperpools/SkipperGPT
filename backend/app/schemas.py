@@ -8,7 +8,9 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .auth_utils import assert_password_within_bcrypt_limit
 from .constants import (
+    JOB_TYPE_NEW_CONSTRUCTION,
     MAX_JOB_CONTACTS,
+    VALID_JOB_TYPES,
     VALID_DOC_CATEGORIES,
     VALID_FEEDBACK_KINDS,
     VALID_FEEDBACK_STATUS,
@@ -49,6 +51,22 @@ class JobTaskUpdate(BaseModel):
                 f"status must be one of {sorted(VALID_STATUSES)}"
             )
         return v
+
+
+class JobTaskCreate(BaseModel):
+    task_label: str = Field(..., min_length=1, max_length=128)
+
+
+class JobTaskMove(BaseModel):
+    direction: str = Field(..., min_length=1, max_length=8)
+
+    @field_validator("direction")
+    @classmethod
+    def _validate_direction(cls, v: str) -> str:
+        vv = v.strip().lower()
+        if vv not in {"up", "down"}:
+            raise ValueError("direction must be 'up' or 'down'")
+        return vv
 
 
 class JobProgress(BaseModel):
@@ -103,6 +121,22 @@ class JobPhotoRead(BaseModel):
     uploaded_at: datetime
     uploaded_by_user_id: Optional[int] = None
     uploaded_by_username: Optional[str] = None
+
+
+class JobNoteRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    job_id: int
+    author_user_id: int
+    author_username: Optional[str] = None
+    author_role: Optional[str] = None
+    body: str
+    created_at: datetime
+
+
+class JobNoteCreate(BaseModel):
+    body: str = Field(..., min_length=1, max_length=8000)
 
 
 class JobContactEntry(BaseModel):
@@ -188,7 +222,15 @@ class ContactUpdate(BaseModel):
 
 class JobBase(BaseModel):
     customer_name: str = Field(..., min_length=1, max_length=255)
+    job_type: str = Field(default=JOB_TYPE_NEW_CONSTRUCTION, min_length=1, max_length=32)
     address: Optional[str] = Field(None, max_length=500)
+    @field_validator("job_type")
+    @classmethod
+    def _validate_job_type_base(cls, v: str) -> str:
+        if v not in VALID_JOB_TYPES:
+            raise ValueError(f"job_type must be one of {sorted(VALID_JOB_TYPES)}")
+        return v
+
     pool_type: Optional[str] = Field(None, max_length=16)
     permit_status: Optional[str] = Field(None, max_length=64)
     permit_number: Optional[str] = Field(None, max_length=128)
@@ -209,6 +251,7 @@ class JobUpdate(BaseModel):
     """Partial update of job-level fields."""
 
     customer_name: Optional[str] = Field(None, min_length=1, max_length=255)
+    job_type: Optional[str] = Field(None, min_length=1, max_length=32)
     address: Optional[str] = Field(None, max_length=500)
     pool_type: Optional[str] = Field(None, max_length=16)
     permit_status: Optional[str] = Field(None, max_length=64)
@@ -223,12 +266,22 @@ class JobUpdate(BaseModel):
     def _contact_ids_job_update(cls, v: object) -> Optional[List[int]]:
         return _validate_contact_id_list(v)
 
+    @field_validator("job_type")
+    @classmethod
+    def _validate_job_type_update(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        if v not in VALID_JOB_TYPES:
+            raise ValueError(f"job_type must be one of {sorted(VALID_JOB_TYPES)}")
+        return v
+
 
 class JobRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
     customer_name: str
+    job_type: str
     address: Optional[str] = None
     pool_type: Optional[str] = None
     permit_status: Optional[str] = None
@@ -242,10 +295,45 @@ class JobRead(BaseModel):
     tasks: List[JobTaskRead] = []
     documents: List[JobDocumentRead] = []
     photos: List[JobPhotoRead] = []
+    job_notes: List[JobNoteRead] = []
     progress: JobProgress
     overall_status: str
     docs_rel_path: Optional[str] = None
     photos_rel_path: Optional[str] = None
+
+
+class JobTypeTaskTemplateCreate(BaseModel):
+    job_type: str = Field(..., min_length=1, max_length=32)
+    task_label: str = Field(..., min_length=1, max_length=128)
+
+    @field_validator("job_type")
+    @classmethod
+    def _validate_job_type_template(cls, v: str) -> str:
+        if v not in VALID_JOB_TYPES:
+            raise ValueError(f"job_type must be one of {sorted(VALID_JOB_TYPES)}")
+        return v
+
+
+class JobTypeTaskTemplateRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    job_type: str
+    task_key: str
+    task_label: str
+    sort_order: int
+    created_at: datetime
+
+
+class JobTypeConvertRequest(BaseModel):
+    target_job_type: str = Field(..., min_length=1, max_length=32)
+
+    @field_validator("target_job_type")
+    @classmethod
+    def _validate_target_job_type(cls, v: str) -> str:
+        if v not in VALID_JOB_TYPES:
+            raise ValueError(f"target_job_type must be one of {sorted(VALID_JOB_TYPES)}")
+        return v
 
 
 class HealthResponse(BaseModel):
