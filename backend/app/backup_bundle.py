@@ -3,6 +3,7 @@
 Run from `backend/`:
     python -m app.backup_bundle export
     python -m app.backup_bundle import "..\\backups\\skipper-backup-YYYYMMDD-HHMMSS.zip"
+    python -m app.backup_bundle import "..\\backups"   # newest *.zip in folder
 """
 from __future__ import annotations
 
@@ -59,6 +60,21 @@ def _local_paths() -> LocalPaths:
         photos_dir=(docs_root / "Photos").resolve(),
         sqlite_db=_resolve_sqlite_db_path(),
     )
+
+
+def _resolve_import_archive(raw: Path) -> Path:
+    """Path to a .zip file, or a directory containing backup zips (newest wins)."""
+    p = raw.expanduser().resolve()
+    if p.is_file():
+        return p
+    if p.is_dir():
+        zips = sorted(p.glob("*.zip"), key=lambda z: z.stat().st_mtime, reverse=True)
+        if not zips:
+            raise FileNotFoundError(f"No .zip files found in directory: {p}")
+        chosen = zips[0]
+        print(f"[backup] Using newest .zip in folder: {chosen.name}")
+        return chosen
+    raise FileNotFoundError(f"Backup archive not found: {p}")
 
 
 def _write_tree_to_zip(zip_file: ZipFile, source_root: Path, archive_root: str) -> int:
@@ -146,9 +162,7 @@ def _restore_tree(extracted_root: Path, extracted_rel: str, target_dir: Path) ->
 
 
 def import_bundle(archive_path: Path, *, pre_backup: bool = True) -> None:
-    archive_path = archive_path.resolve()
-    if not archive_path.is_file():
-        raise FileNotFoundError(f"Archive not found: {archive_path}")
+    archive_path = _resolve_import_archive(archive_path)
 
     paths = _local_paths()
     with ZipFile(archive_path, mode="r") as bundle:
@@ -217,7 +231,11 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     import_cmd = sub.add_parser("import", help="Restore backup archive.")
-    import_cmd.add_argument("archive", type=Path, help="Path to backup zip to import.")
+    import_cmd.add_argument(
+        "archive",
+        type=Path,
+        help="Path to backup .zip, or a folder (uses newest *.zip inside).",
+    )
     import_cmd.add_argument(
         "--skip-pre-backup",
         action="store_true",

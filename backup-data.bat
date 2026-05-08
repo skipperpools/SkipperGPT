@@ -1,5 +1,5 @@
 @echo off
-setlocal EnableExtensions
+setlocal EnableExtensions EnableDelayedExpansion
 
 set "ROOT=%~dp0"
 set "BACKEND=%ROOT%backend"
@@ -32,13 +32,13 @@ if "%~1"=="" (
   if errorlevel 2 (
     echo.
     set /p "ARCHIVE=Enter full path to backup zip: "
-    if "%ARCHIVE%"=="" (
+    if "!ARCHIVE!"=="" (
       echo No archive path provided.
       pause
       exit /b 1
     )
     set "PYTHONPATH=%BACKEND%"
-    "%PY%" -m app.backup_bundle import "%ARCHIVE%"
+    "%PY%" -m app.backup_bundle import "!ARCHIVE!"
     set "EXIT_CODE=%ERRORLEVEL%"
     if not "%EXIT_CODE%"=="0" pause
     if "%EXIT_CODE%"=="0" echo Done.
