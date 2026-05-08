@@ -167,6 +167,37 @@ Open http://localhost:8000 in your browser.
 
 The SQLite file is created automatically at `data/skipper.db` on first run.
 
+### Backup export/import (move data to another machine)
+
+Use the root launcher script to bundle and restore local data:
+
+```powershell
+# from project root
+backup-data.bat export
+```
+
+This creates a zip in `backups/` (for example `backups/skipper-backup-20260508-160000.zip`) containing:
+- `database/skipper.db` (jobs, users, docs/photos metadata, and all other app tables)
+- `files/Docs/**`
+- `files/Photos/**`
+- `manifest.json`
+
+Import on another machine (with the same project + backend venv setup):
+
+```powershell
+# from project root
+backup-data.bat import "D:\Backups\skipper-backup-20260508-160000.zip"
+```
+
+Import behavior:
+- Creates a safety pre-import backup in `backups/pre-import-*.zip` by default.
+- Restores `data/skipper.db`, `Docs/`, and `Photos/` from the archive.
+- Refuses malformed archives (missing `manifest.json` or required paths).
+
+Optional flags:
+- Custom export destination: `backup-data.bat export --output "D:\Backups\my-export.zip"`
+- Skip safety backup on import: `backup-data.bat import "<zip>" --skip-pre-backup`
+
 ### Job Docs and Photos folders
 
 Uploaded PDFs and images are stored under the configured **`DOCS_ROOT`** (defaults to the project root; see `backend/app/config.py`). Each job has stable folder names stored on the row (`docs_folder_name`, `photos_folder_name`), derived from the customer name (sanitized for Windows paths). If two jobs would share the same base name, the folder ends with `__<job_id>` so paths stay unique.
