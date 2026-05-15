@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import shutil
+import sqlite3
 import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -23,6 +24,7 @@ MANIFEST_NAME = "manifest.json"
 DB_ARCHIVE_PATH = "database/skipper.db"
 DOCS_ARCHIVE_DIR = "files/Docs/"
 PHOTOS_ARCHIVE_DIR = "files/Photos/"
+USERS_MANIFEST_PATH = "exports/users_manifest.json"
 
 
 @dataclass(frozen=True)
@@ -62,6 +64,7 @@ def _local_paths() -> LocalPaths:
     )
 
 
+<<<<<<< HEAD
 def _resolve_import_archive(raw: Path) -> Path:
     """Path to a .zip file, or a directory containing backup zips (newest wins)."""
     p = raw.expanduser().resolve()
@@ -75,6 +78,40 @@ def _resolve_import_archive(raw: Path) -> Path:
         print(f"[backup] Using newest .zip in folder: {chosen.name}")
         return chosen
     raise FileNotFoundError(f"Backup archive not found: {p}")
+=======
+def _users_manifest_data(db_path: Path) -> tuple[int, list[dict]]:
+    """Read non-sensitive user rows for inclusion in backup (hashes stay in DB file only)."""
+    if not db_path.is_file():
+        return 0, []
+    try:
+        uri = db_path.resolve().as_uri()
+        conn = sqlite3.connect(f"{uri}?mode=ro", uri=True)
+    except sqlite3.Error:
+        return 0, []
+    try:
+        row = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='users'"
+        ).fetchone()
+        if row is None:
+            return 0, []
+        cur = conn.execute(
+            "SELECT id, username, role, is_active, created_at FROM users ORDER BY id"
+        )
+        users: list[dict] = []
+        for uid, username, role, is_active, created_at in cur.fetchall():
+            users.append({
+                "id": uid,
+                "username": username,
+                "role": role,
+                "is_active": bool(is_active),
+                "created_at": created_at,
+            })
+        return len(users), users
+    except sqlite3.Error:
+        return 0, []
+    finally:
+        conn.close()
+>>>>>>> abc06371098963995ac523357a95aaec610a7dc5
 
 
 def _write_tree_to_zip(zip_file: ZipFile, source_root: Path, archive_root: str) -> int:
@@ -90,7 +127,14 @@ def _write_tree_to_zip(zip_file: ZipFile, source_root: Path, archive_root: str) 
     return file_count
 
 
-def _build_manifest(paths: LocalPaths, db_present: bool, docs_files: int, photos_files: int) -> dict:
+def _build_manifest(
+    paths: LocalPaths,
+    *,
+    db_present: bool,
+    docs_files: int,
+    photos_files: int,
+    user_count: int,
+) -> dict:
     return {
         "bundle_version": BUNDLE_VERSION,
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
@@ -101,10 +145,12 @@ def _build_manifest(paths: LocalPaths, db_present: bool, docs_files: int, photos
         },
         "included": {
             "database": db_present,
+            "user_count": user_count,
             "docs_dir_exists": paths.docs_dir.exists(),
             "photos_dir_exists": paths.photos_dir.exists(),
             "docs_file_count": docs_files,
             "photos_file_count": photos_files,
+            "users_manifest_file": db_present,
         },
     }
 
@@ -117,6 +163,7 @@ def export_bundle(output_path: Path | None = None) -> Path:
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     db_present = paths.sqlite_db.exists()
+    user_count, user_rows = _users_manifest_data(paths.sqlite_db)
     docs_files = 0
     photos_files = 0
 
@@ -125,12 +172,28 @@ def export_bundle(output_path: Path | None = None) -> Path:
         photos_files = _write_tree_to_zip(bundle, paths.photos_dir, PHOTOS_ARCHIVE_DIR)
         if db_present:
             bundle.write(paths.sqlite_db, DB_ARCHIVE_PATH)
+            users_manifest = {
+                "user_count": user_count,
+                "users": user_rows,
+                "note": (
+                    "Password hashes and full auth state live only in database/skipper.db; "
+                    "restore that file to preserve logins."
+                ),
+            }
+            bundle.writestr(USERS_MANIFEST_PATH, json.dumps(users_manifest, indent=2))
 
-        manifest = _build_manifest(paths, db_present, docs_files, photos_files)
+        manifest = _build_manifest(
+            paths,
+            db_present=db_present,
+            docs_files=docs_files,
+            photos_files=photos_files,
+            user_count=user_count,
+        )
         bundle.writestr(MANIFEST_NAME, json.dumps(manifest, indent=2))
 
     print(f"[backup] Export complete: {output_path}")
     print(f"[backup] DB included: {db_present} ({paths.sqlite_db})")
+    print(f"[backup] Users backed up (in DB + manifest): {user_count}")
     print(f"[backup] Docs files: {docs_files} ({paths.docs_dir})")
     print(f"[backup] Photos files: {photos_files} ({paths.photos_dir})")
     return output_path
@@ -210,15 +273,20 @@ def import_bundle(archive_path: Path, *, pre_backup: bool = True) -> None:
         _restore_tree(tmp_root, DOCS_ARCHIVE_DIR.rstrip("/"), paths.docs_dir)
         _restore_tree(tmp_root, PHOTOS_ARCHIVE_DIR.rstrip("/"), paths.photos_dir)
 
+    user_after, _ = _users_manifest_data(paths.sqlite_db)
     print(f"[backup] Import complete from: {archive_path}")
     print(f"[backup] Restored DB: {paths.sqlite_db}")
     print(f"[backup] Restored Docs: {paths.docs_dir}")
     print(f"[backup] Restored Photos: {paths.photos_dir}")
+    print(f"[backup] Users in restored database: {user_after}")
 
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Export/import a Skipper backup bundle (DB + Docs + Photos)."
+        description=(
+            "Export/import a Skipper backup bundle "
+            "(SQLite DB including users/jobs/metadata, Docs, Photos)."
+        ),
     )
     sub = parser.add_subparsers(dest="command", required=True)
 

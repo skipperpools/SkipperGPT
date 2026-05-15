@@ -177,10 +177,11 @@ backup-data.bat export
 ```
 
 This creates a zip in `backups/` (for example `backups/skipper-backup-20260508-160000.zip`) containing:
-- `database/skipper.db` (jobs, users, docs/photos metadata, and all other app tables)
+- `database/skipper.db` (jobs, **all user accounts** including password hashes, docs/photos metadata, and every other app table)
+- `exports/users_manifest.json` (read-only list of usernames/roles for sanity-checking the backup; logins are restored from the database file above)
 - `files/Docs/**`
 - `files/Photos/**`
-- `manifest.json`
+- `manifest.json` (includes `user_count`)
 
 Import on another machine (with the same project + backend venv setup):
 
