@@ -1,9 +1,10 @@
 """HTTP routes for jobs and tasks."""
 from __future__ import annotations
 
+from datetime import date
 from typing import List
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.orm import Session
 
 from ..constants import (
@@ -37,6 +38,7 @@ from ..schemas import (
 from ..services.job_disk_sync import sync_job_attachments_from_disk
 from ..services.job_docs_fs import move_job_docs_on_rename
 from ..services.job_photos_fs import move_job_photos_on_rename
+from ..schedule_pdf import build_schedule_pdf
 from ..services.jobs_service import to_job_read, to_job_read_list
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
@@ -61,12 +63,27 @@ def list_jobs(
     db: Session = Depends(get_db),
 ) -> List[JobRead]:
     jobs = jobs_repo.list_jobs(db, include_archived=include_archived)
-    for j in jobs:
-        sync_job_attachments_from_disk(db, j, settings.docs_root)
-    jobs = jobs_repo.list_jobs(db, include_archived=include_archived)
     if user.role == "field":
         jobs = [job for job in jobs if job.job_type != JOB_TYPE_SALES]
     return to_job_read_list(jobs)
+
+
+@router.get("/schedule.pdf")
+def export_schedule_pdf(
+    include_archived: bool = False,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> Response:
+    jobs = jobs_repo.list_jobs(db, include_archived=include_archived)
+    if user.role == "field":
+        jobs = [job for job in jobs if job.job_type != JOB_TYPE_SALES]
+    pdf_bytes = build_schedule_pdf(jobs, as_of=date.today())
+    filename = f"Schedules-{date.today().isoformat()}.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/{job_id}", response_model=JobRead)
@@ -92,12 +109,28 @@ def create_job(
 ) -> JobRead:
     data = payload.model_dump(exclude_unset=True)
     contact_ids = data.pop("contact_ids", None)
+    clone_from_job_id = data.pop("clone_from_job_id", None)
+    source_job = None
+    if clone_from_job_id is not None:
+        source_job = jobs_repo.get_job(db, clone_from_job_id)
+        if source_job is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Source job to clone from not found",
+            )
     try:
         job = jobs_repo.create_job(db, fields=data, contact_ids=contact_ids)
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
         ) from exc
+    if source_job is not None:
+        seeded_keys = jobs_repo.seeded_task_keys_for_job_type(
+            db, job_type=source_job.job_type
+        )
+        for src_task in source_job.tasks:
+            if src_task.task_key not in seeded_keys:
+                jobs_repo.add_job_task(db, job=job, task_label=src_task.task_label)
     sync_job_attachments_from_disk(db, job, settings.docs_root)
     job = jobs_repo.get_job(db, job.id)
     assert job is not None
@@ -116,12 +149,13 @@ def update_job(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
     fields = payload.model_dump(exclude_unset=True)
     contact_ids = fields.pop("contact_ids", None)
-    next_job_type = fields.pop("job_type", None)
+    next_job_type = fields.get("job_type")
     if next_job_type is not None and next_job_type != job.job_type:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="job_type is locked after creation",
-        )
+        if user.role not in ("admin", "office"):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only admin and office users can change job type",
+            )
     if not fields and contact_ids is None:
         return to_job_read(job)
     wants_archive = "archived" in fields

@@ -10,8 +10,9 @@ from ..models import Job
 from ..repositories import jobs_repo
 from .job_docs_fs import assign_docs_folder_if_needed
 from .job_docs_paths import absolute_job_docs_dir, stored_path_for_file
-from .job_photos_fs import assign_photos_folder_if_needed
+from .job_photos_fs import assign_photos_folder_if_needed, absolute_file_path as photo_absolute_file_path
 from .job_photos_paths import absolute_job_photos_dir, stored_path_for_file as photo_stored_path_for_file
+from .thumbnails import delete_thumbnail_for
 
 _MAX_MAGIC_READ = 16_384
 
@@ -130,3 +131,16 @@ def sync_job_attachments_from_disk(db: Session, job: Job, docs_root: Path) -> No
                 uploaded_by_user_id=None,
             )
             existing_photos.add(rel)
+
+    # Drop DB rows for photos whose originals are gone (manual deletes / restore mismatch).
+    for photo in list(job.photos):
+        try:
+            abs_photo = photo_absolute_file_path(docs_root, photo.stored_path)
+        except ValueError:
+            delete_thumbnail_for(docs_root, photo.stored_path, "photo")
+            jobs_repo.delete_job_photo(db, photo=photo)
+            continue
+        if abs_photo.is_file():
+            continue
+        delete_thumbnail_for(docs_root, photo.stored_path, "photo")
+        jobs_repo.delete_job_photo(db, photo=photo)

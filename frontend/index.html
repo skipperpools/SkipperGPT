@@ -154,6 +154,44 @@
               <span>Job Description</span>
               <textarea name="notes" rows="3"></textarea>
             </label>
+            <div class="field edit-job-contacts-block">
+              <div class="edit-job-contacts-header">
+                <span>Contacts</span>
+              </div>
+              <p class="edit-job-contacts-hint">
+                Select from the shared directory (up to 25). Manage the directory from the Contacts menu.
+              </p>
+              <label class="field">
+                <span>Filter directory</span>
+                <input type="search" id="new-job-contact-search" placeholder="Search name, role, phone…" autocomplete="off" />
+              </label>
+              <p class="edit-job-contacts-subhint">Selected for this job (order shown on card)</p>
+              <div id="new-job-contact-selected" class="edit-job-contact-selected"></div>
+              <p class="edit-job-contacts-subhint">Add from directory</p>
+              <div id="new-job-contact-catalog" class="edit-job-contact-catalog"></div>
+              <button type="button" class="btn btn--ghost btn--sm" id="new-job-contact-new-toggle">+ New contact (save to directory)</button>
+              <div id="new-job-contact-new-wrap" class="edit-job-contact-new-wrap" hidden>
+                <div class="edit-job-contact-row__fields">
+                  <label class="field field--compact">
+                    <span>Role / label</span>
+                    <input type="text" id="new-job-new-label" maxlength="64" autocomplete="off" />
+                  </label>
+                  <label class="field field--compact">
+                    <span>Name</span>
+                    <input type="text" id="new-job-new-name" maxlength="255" autocomplete="off" />
+                  </label>
+                  <label class="field field--compact">
+                    <span>Phone</span>
+                    <input type="text" id="new-job-new-phone" maxlength="64" autocomplete="off" />
+                  </label>
+                  <label class="field field--compact">
+                    <span>Email</span>
+                    <input type="email" id="new-job-new-email" maxlength="255" autocomplete="off" />
+                  </label>
+                </div>
+                <button type="button" class="btn btn--primary btn--sm" id="new-job-contact-new-save">Save to directory &amp; add</button>
+              </div>
+            </div>
           </div>
           <footer class="modal__footer">
             <button type="button" class="btn btn--ghost" data-close="1">Cancel</button>
@@ -178,7 +216,12 @@
             </label>
             <label class="field">
               <span>Job type</span>
-              <input name="job_type" maxlength="32" readonly />
+              <select name="job_type">
+                <option value="new_construction">New Construction</option>
+                <option value="renovation">Renovation</option>
+                <option value="misc">Misc.</option>
+                <option value="sales">Sales</option>
+              </select>
             </label>
             <label class="field">
               <span>Address</span>
@@ -353,6 +396,18 @@
             <button type="button" class="btn btn--ghost" data-close="1" aria-label="Close">x</button>
           </header>
           <div class="modal__body modal__body--scroll" id="contacts-modal-body"></div>
+        </div>
+      </div>
+
+      <!-- Notes modal -->
+      <div id="notes-modal" class="modal" hidden>
+        <div class="modal__backdrop" data-close="1"></div>
+        <div class="modal__panel modal__panel--wide" aria-labelledby="notes-modal-title">
+          <header class="modal__header">
+            <h2 id="notes-modal-title">Notes - <span id="notes-modal-title-text"></span></h2>
+            <button type="button" class="btn btn--ghost" data-close="1" aria-label="Close">x</button>
+          </header>
+          <div class="modal__body modal__body--scroll" id="notes-modal-body"></div>
         </div>
       </div>
 

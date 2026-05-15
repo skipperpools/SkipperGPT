@@ -393,7 +393,16 @@ input, textarea, select { font-family: inherit; font-size: 1rem; }
   color: var(--text);
 }
 
-.overview__back {
+.overview__actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.overview__back,
+.overview__export {
   flex-shrink: 0;
 }
 
@@ -513,6 +522,10 @@ button.overview-row:last-child {
   transform-style: preserve-3d;
   transition: transform 0.55s cubic-bezier(0.4, 0.05, 0.2, 1);
   will-change: transform;
+}
+
+.card-inner.no-flip-transition {
+  transition: none;
 }
 
 .card.is-flipped .card-inner { transform: rotateY(180deg); }
@@ -666,15 +679,82 @@ button.overview-row:last-child {
   overflow: hidden;
 }
 
-.card__notes-preview {
+.card__section-label {
+  display: block;
+  margin: 0 0 6px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.card__recent-notes {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  margin-top: 4px;
+  padding: 8px 10px;
+  background: var(--bg-soft);
+  border-radius: var(--radius-sm);
+}
+
+.card__recent-notes--interactive {
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.card__recent-notes--interactive:hover {
+  background: color-mix(in srgb, var(--bg-soft) 88%, var(--text-muted));
+}
+
+.card__recent-notes--interactive:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.card__recent-notes__empty-hint {
   margin: 0;
-  padding-bottom: 6px;
-  font-size: 0.92rem;
-  font-weight: 600;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.card__recent-notes-more {
+  display: block;
+  margin: 0 0 6px;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+.card__recent-notes-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.card__recent-note {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.card__recent-note-meta {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card__recent-note-body {
+  font-size: 0.9rem;
+  font-weight: 500;
   line-height: 1.35;
   color: var(--text);
-  flex: 0 0 auto;
-  white-space: normal;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
@@ -683,20 +763,75 @@ button.overview-row:last-child {
   overflow-wrap: anywhere;
 }
 
-.card__progress {
+.card__last-task {
   margin-top: auto;
+  padding-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 0 0 auto;
+}
+
+.card__last-task-label {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.card__last-task-value {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.3;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+}
+
+.card__last-task-value--empty {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.card__progress {
+  margin-top: 0;
   display: flex;
   flex-direction: column;
   gap: 6px;
+  flex: 0 0 auto;
 }
 .card__progress-row {
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-end;
   align-items: baseline;
   font-size: 0.82rem;
   color: var(--text-muted);
 }
-.card__progress-row strong { color: var(--text); font-weight: 700; }
+.card__progress-count { color: var(--text); font-weight: 700; }
+
+.card__meta-compact {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 6px;
+  font-size: 0.75rem;
+  line-height: 1.3;
+  margin-top: 6px;
+  flex: 0 0 auto;
+}
+.card__meta-k { color: var(--text-muted); font-weight: 600; }
+.card__meta-item {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+.card__meta-sep { color: var(--text-muted); }
 
 .progressbar {
   height: 8px;
@@ -714,16 +849,6 @@ button.overview-row:last-child {
 .card[data-status="issue"]     .progressbar__fill { background: var(--status-issue); }
 .card[data-status="not_started"] .progressbar__fill { background: var(--status-not-started); }
 
-.card__meta {
-  margin-top: 10px;
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 6px 10px;
-  font-size: 0.8rem;
-}
-.card__meta dt { color: var(--text-muted); margin: 0; font-weight: 600; }
-.card__meta dd { color: var(--text); margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
 .card__hint {
   margin-top: 10px;
   font-size: 0.72rem;
@@ -736,6 +861,7 @@ button.overview-row:last-child {
 
 .back__header {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   padding: 12px 14px;
@@ -754,7 +880,7 @@ button.overview-row:last-child {
 
 .back__header-main {
   min-width: 0;
-  flex: 1 1 240px;
+  flex: 1 1 200px;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -1018,6 +1144,16 @@ button.overview-row:last-child {
 .job-notes-feed {
   border-left: 3px solid var(--section-job-notes-border);
   background: var(--section-job-notes-bg);
+}
+
+.notes-modal__body-inner.job-notes-feed {
+  border-left: none;
+  padding: 0;
+  background: transparent;
+}
+
+.notes-modal__body-inner .job-notes-feed__body {
+  margin-top: 0;
 }
 .job-notes-feed__accordion {
   margin-top: 2px;
@@ -1900,6 +2036,7 @@ button.overview-row:last-child {
 
 .back__header {
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;

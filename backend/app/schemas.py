@@ -240,6 +240,7 @@ class JobBase(BaseModel):
 
 class JobCreate(JobBase):
     contact_ids: Optional[List[int]] = None
+    clone_from_job_id: Optional[int] = None
 
     @field_validator("contact_ids", mode="before")
     @classmethod

@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from ..config import settings
 from ..constants import DOC_CATEGORY_FIELD, VALID_DOC_CATEGORIES
-from ..database import get_db
+from ..database import SessionLocal, get_db
 from ..deps.auth import get_current_user, require_roles
 from ..models import User
 from ..repositories import jobs_repo
@@ -142,15 +142,16 @@ def download_job_document_thumbnail(
     job_id: int,
     document_id: int,
     _user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
 ) -> FileResponse:
-    job = jobs_repo.get_job(db, job_id)
-    if job is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
-    doc = jobs_repo.get_job_document(db, job_id=job_id, document_id=document_id)
-    if doc is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
-    thumb = ensure_pdf_thumbnail(settings.docs_root, doc.stored_path)
+    with SessionLocal() as db:
+        job = jobs_repo.get_job(db, job_id)
+        if job is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+        doc = jobs_repo.get_job_document(db, job_id=job_id, document_id=document_id)
+        if doc is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+        stored_path = doc.stored_path
+    thumb = ensure_pdf_thumbnail(settings.docs_root, stored_path)
     if thumb is None or not thumb.is_file():
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

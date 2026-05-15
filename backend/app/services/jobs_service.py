@@ -5,6 +5,8 @@ response payloads with the extra derived fields the UI needs.
 """
 from __future__ import annotations
 
+import re
+from datetime import datetime, timezone
 from typing import List, Optional
 
 from ..constants import (
@@ -27,6 +29,19 @@ from ..schemas import (
 from .job_docs_paths import docs_dir_relative
 from .job_photos_paths import photos_dir_relative
 
+_ISO_DATE_RE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})$")
+
+
+def _parse_iso_date_from_task_value(value: Optional[str]) -> Optional[datetime]:
+    """Parse YYYY-MM-DD task date from value for display (noon UTC)."""
+    if not value:
+        return None
+    m = _ISO_DATE_RE.match(value.strip())
+    if not m:
+        return None
+    y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
+    return datetime(y, mo, d, 12, 0, 0, tzinfo=timezone.utc)
+
 
 def _compute_progress(tasks: List[JobTask]) -> JobProgress:
     total = len(tasks)
@@ -42,7 +57,7 @@ def _compute_progress(tasks: List[JobTask]) -> JobProgress:
             key=lambda t: t.completed_at or t.sort_order,  # fallback to sort order
         )
         latest_label = latest.task_label
-        latest_completed_at = latest.completed_at
+        latest_completed_at = _parse_iso_date_from_task_value(latest.value)
 
     return JobProgress(
         completed=completed,

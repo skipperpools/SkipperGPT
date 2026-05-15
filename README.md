@@ -301,7 +301,7 @@ Send `Authorization: Bearer <token>` on protected routes (obtained from **`POST 
     "total": 33,
     "percent": 42,
     "latest_label": "Tile",
-    "latest_completed_at": "2026-03-25T00:00:00Z"
+    "latest_completed_at": "2026-03-25T12:00:00Z"
   },
   "overall_status": "in_progress",
   "documents": [],
@@ -312,6 +312,8 @@ Send `Authorization: Bearer <token>` on protected routes (obtained from **`POST 
 ```
 
 Documents include **`category`** (`field` | `permit`), **`uploaded_by_user_id`**, and **`uploaded_by_username`** when available. Photos similarly include uploader fields.
+
+`progress.latest_completed_at` reflects the **task date** (`value` as `YYYY-MM-DD` on the latest completed task), not when the task was checked off (`completed_at`).
 
 ### Task `status` values
 

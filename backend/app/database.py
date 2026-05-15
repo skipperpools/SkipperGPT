@@ -10,6 +10,7 @@ from pathlib import Path
 
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
+from sqlalchemy.pool import StaticPool
 
 from .config import PROJECT_ROOT, settings
 
@@ -79,12 +80,15 @@ _resolved_url = _local_only_database_url()
 _is_sqlite = _resolved_url.startswith("sqlite")
 _connect_args = {"check_same_thread": False} if _is_sqlite else {"prepare_threshold": None}
 
-engine = create_engine(
-    _resolved_url,
-    echo=False,
-    future=True,
-    connect_args=_connect_args,
-)
+_engine_kwargs: dict = {
+    "echo": False,
+    "future": True,
+    "connect_args": _connect_args,
+}
+if _is_sqlite:
+    _engine_kwargs["poolclass"] = StaticPool
+
+engine = create_engine(_resolved_url, **_engine_kwargs)
 
 
 @event.listens_for(engine, "connect")

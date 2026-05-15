@@ -20,6 +20,10 @@ const state = {
   unbilledNotificationCount: 0,
   /** @type {Array<{id:number,label?:string,name?:string,phone?:string,email?:string}>} */
   contactsCatalog: [],
+  /** @type {number|null} job whose card should show details after a full grid rerender */
+  activeDetailJobId: null,
+  /** when true with activeDetailJobId, restore flipped card without modal overlay (see keepCardOpenWithoutOverlay) */
+  activeDetailNoOverlay: false,
 };
 
 const POLL_BASE_INTERVAL_MS = 5000;
@@ -59,6 +63,10 @@ const photosModalState = {
   selectedIndex: 0,
   pageIndex: 0,
 };
+
+const notesModalState = {
+  jobId: null,
+};
 const PHOTOS_MODAL_PAGE_SIZE = 12;
 
 const photoViewerState = {
@@ -91,27 +99,137 @@ const photoViewerGesture = {
 
 // Card-back thumbnail grid: 4 columns x 2 rows.
 const VISIBLE_PHOTO_COUNT = 8;
-/** Max chars of job notes shown on the unflipped card front. */
-const JOB_NOTES_PREVIEW_MAX = 250;
+/** Max feed notes shown on the unflipped card front. */
+const RECENT_JOB_NOTES_COUNT = 3;
+/** Max chars per feed note body on the card front. */
+const RECENT_JOB_NOTE_BODY_MAX = 140;
 /** Must match backend MAX_JOB_CONTACTS. */
 const MAX_EDIT_JOB_CONTACTS = 25;
 
 /** Ordered contact ids for Edit Job modal (shared directory). */
 let editJobContactIdsOrder = [];
 
+/** Ordered contact ids for New Job modal (shared directory). */
+let newJobContactIdsOrder = [];
+
+/** When set, New Job submission also copies custom tasks from this source job. */
+let cloneFromJobId = null;
+
 /** When set, directory form PATCHes this contact instead of POST create. */
 let contactsDirectoryEditingId = null;
 
 /**
- * @param {string|null|undefined} text
+ * @param {string|null|undefined} body
  * @param {number} [maxLen]
- * @returns {{ text: string, truncated: boolean, full: string } | null}
+ * @returns {{ text: string, truncated: boolean, full: string }}
  */
-function truncateJobNotesPreview(text, maxLen = JOB_NOTES_PREVIEW_MAX) {
-  const full = (text ?? "").trim();
-  if (!full) return null;
+function truncateNoteBody(body, maxLen = RECENT_JOB_NOTE_BODY_MAX) {
+  const full = (body ?? "").trim();
+  if (!full) return { text: "", truncated: false, full: "" };
   if (full.length <= maxLen) return { text: full, truncated: false, full };
   return { text: full.slice(0, maxLen) + "…", truncated: true, full };
+}
+
+/**
+ * @param {Array<{ id?: number, created_at?: string }>|null|undefined} notes
+ * @param {number} [limit]
+ */
+function sliceRecentJobNotes(notes, limit = RECENT_JOB_NOTES_COUNT) {
+  if (!Array.isArray(notes) || !notes.length) return [];
+  return notes.slice(0, limit);
+}
+
+function openNotesModalFromCard(e, job) {
+  e.stopPropagation();
+  openNotesModal(job);
+}
+
+function onRecentNotesPreviewKeydown(e, job) {
+  if (e.key !== "Enter" && e.key !== " ") return;
+  e.preventDefault();
+  e.stopPropagation();
+  openNotesModal(job);
+}
+
+/** @returns {HTMLElement} */
+function renderRecentJobNotesPreview(job) {
+  const allNotes = Array.isArray(job.job_notes) ? job.job_notes : [];
+  const recent = sliceRecentJobNotes(allNotes);
+  const total = allNotes.length;
+  const moreCount = total - recent.length;
+  const labelText =
+    total > RECENT_JOB_NOTES_COUNT ? `Recent Notes (${total})` : "Recent Notes";
+
+  const children = [el("span", { class: "card__section-label" }, labelText)];
+
+  if (!recent.length) {
+    children.push(
+      el("p", { class: "card__recent-notes__empty-hint" }, "No notes yet — tap to add")
+    );
+  } else {
+    if (moreCount > 0) {
+      children.push(
+        el("span", { class: "card__recent-notes-more" }, `+${moreCount} more`)
+      );
+    }
+    const list = el("ul", { class: "card__recent-notes-list" });
+    for (const note of recent) {
+      const authoredBy = note.author_username || `User #${note.author_user_id}`;
+      const when = fmtDate(note.created_at);
+      const metaBits = [authoredBy];
+      if (when) metaBits.push(when);
+      const bodyPreview = truncateNoteBody(note.body);
+      const itemAttrs = { class: "card__recent-note" };
+      if (bodyPreview.truncated && bodyPreview.full) itemAttrs.title = bodyPreview.full;
+      list.appendChild(
+        el("li", itemAttrs, [
+          el("span", { class: "card__recent-note-meta" }, metaBits.join(" · ")),
+          el("span", { class: "card__recent-note-body" }, bodyPreview.text),
+        ])
+      );
+    }
+    children.push(list);
+  }
+
+  const customer = job.customer_name || "job";
+  return el(
+    "section",
+    {
+      class: "card__recent-notes card__recent-notes--interactive",
+      role: "button",
+      tabindex: "0",
+      "aria-label": `Open job notes for ${customer}`,
+      onclick: (e) => openNotesModalFromCard(e, job),
+      onkeydown: (e) => onRecentNotesPreviewKeydown(e, job),
+    },
+    children
+  );
+}
+
+/** @returns {HTMLElement|null} */
+function renderCardMetaCompact(job) {
+  const items = [
+    { label: "Permit", value: job.permit_number },
+    { label: "Mgr", value: job.field_manager },
+    { label: "Pool", value: job.pool_type },
+    { label: "Status", value: job.permit_status },
+  ].filter((item) => (item.value ?? "").trim());
+
+  if (!items.length) return null;
+
+  const row = el("div", { class: "card__meta-compact" });
+  items.forEach((item, index) => {
+    if (index > 0) row.appendChild(el("span", { class: "card__meta-sep", "aria-hidden": "true" }, "·"));
+    const value = String(item.value).trim();
+    row.appendChild(
+      el(
+        "span",
+        { class: "card__meta-item", title: `${item.label}: ${value}` },
+        [el("span", { class: "card__meta-k" }, `${item.label} `), value]
+      )
+    );
+  });
+  return row;
 }
 
 /**
@@ -276,6 +394,136 @@ function collectEditJobContactIdsPayload() {
   return editJobContactIdsOrder.slice();
 }
 
+function clearNewJobContactsPanel() {
+  newJobContactIdsOrder = [];
+  $("#new-job-contact-search") && ($("#new-job-contact-search").value = "");
+  const sel = $("#new-job-contact-selected");
+  const cat = $("#new-job-contact-catalog");
+  if (sel) sel.innerHTML = "";
+  if (cat) cat.innerHTML = "";
+  const nw = $("#new-job-contact-new-wrap");
+  if (nw) nw.hidden = true;
+  for (const id of ["new-job-new-label", "new-job-new-name", "new-job-new-phone", "new-job-new-email"]) {
+    const n = document.getElementById(id);
+    if (n) n.value = "";
+  }
+}
+
+function renderNewJobContactsPicker() {
+  const selectedEl = $("#new-job-contact-selected");
+  const catalogEl = $("#new-job-contact-catalog");
+  const searchEl = $("#new-job-contact-search");
+  if (!selectedEl || !catalogEl) return;
+  const q = (searchEl?.value || "").trim().toLowerCase();
+  selectedEl.innerHTML = "";
+  const selectedSet = new Set(newJobContactIdsOrder);
+
+  newJobContactIdsOrder.forEach((id, idx) => {
+    const c = state.contactsCatalog.find((x) => x.id === id);
+    const labelText = formatContactOneLine(c) || `Contact #${id}`;
+    selectedEl.appendChild(
+      el("div", { class: "edit-job-contact-picked-row" }, [
+        el("span", { class: "edit-job-contact-picked-label", title: labelText }, labelText),
+        el("div", { class: "edit-job-contact-picked-actions" }, [
+          el(
+            "button",
+            {
+              type: "button",
+              class: "btn btn--ghost btn--sm",
+              "aria-label": "Move up",
+              disabled: idx === 0 ? true : null,
+              onclick: (e) => {
+                e.preventDefault();
+                if (idx <= 0) return;
+                const t = newJobContactIdsOrder[idx - 1];
+                newJobContactIdsOrder[idx - 1] = newJobContactIdsOrder[idx];
+                newJobContactIdsOrder[idx] = t;
+                renderNewJobContactsPicker();
+              },
+            },
+            "↑"
+          ),
+          el(
+            "button",
+            {
+              type: "button",
+              class: "btn btn--ghost btn--sm",
+              "aria-label": "Move down",
+              disabled: idx >= newJobContactIdsOrder.length - 1 ? true : null,
+              onclick: (e) => {
+                e.preventDefault();
+                if (idx >= newJobContactIdsOrder.length - 1) return;
+                const t = newJobContactIdsOrder[idx + 1];
+                newJobContactIdsOrder[idx + 1] = newJobContactIdsOrder[idx];
+                newJobContactIdsOrder[idx] = t;
+                renderNewJobContactsPicker();
+              },
+            },
+            "↓"
+          ),
+          el(
+            "button",
+            {
+              type: "button",
+              class: "btn btn--ghost btn--sm",
+              "aria-label": "Remove from job",
+              onclick: (e) => {
+                e.preventDefault();
+                newJobContactIdsOrder.splice(idx, 1);
+                renderNewJobContactsPicker();
+              },
+            },
+            "Remove"
+          ),
+        ]),
+      ])
+    );
+  });
+
+  catalogEl.innerHTML = "";
+  const avail = state.contactsCatalog.filter((c) => {
+    if (selectedSet.has(c.id)) return false;
+    if (!q) return true;
+    const hay = [c.label, c.name, c.phone, c.email].filter(Boolean).join(" ").toLowerCase();
+    return hay.includes(q);
+  });
+  if (!avail.length) {
+    catalogEl.appendChild(
+      el("p", { class: "edit-job-contact-catalog-empty" }, q ? "No matches." : "No more contacts to add.")
+    );
+    return;
+  }
+  for (const c of avail) {
+    catalogEl.appendChild(
+      el("div", { class: "edit-job-contact-catalog-row" }, [
+        el("span", { class: "edit-job-contact-catalog-label" }, formatContactOneLine(c)),
+        el(
+          "button",
+          {
+            type: "button",
+            class: "btn btn--primary btn--sm",
+            onclick: (e) => {
+              e.preventDefault();
+              if (newJobContactIdsOrder.length >= MAX_EDIT_JOB_CONTACTS) {
+                toast(`Maximum ${MAX_EDIT_JOB_CONTACTS} contacts per job`, "error");
+                return;
+              }
+              if (newJobContactIdsOrder.includes(c.id)) return;
+              newJobContactIdsOrder.push(c.id);
+              renderNewJobContactsPicker();
+            },
+          },
+          "Add"
+        ),
+      ])
+    );
+  }
+}
+
+function collectNewJobContactIdsPayload() {
+  return newJobContactIdsOrder.slice();
+}
+
 function closeContactsDirectoryModal() {
   const m = $("#contacts-directory-modal");
   if (m) m.hidden = true;
@@ -294,6 +542,7 @@ async function openContactsDirectoryModal() {
   closeDocsModal();
   closePhotosModal();
   closeContactsModal();
+  closeNotesModal();
   modal.hidden = false;
   await refreshContactsDirectoryModal();
 }
@@ -492,23 +741,85 @@ async function refreshContactsDirectoryModal() {
 // leak is bounded by the number of distinct photos viewed.
 const photoThumbUrlCache = new Map();
 const docThumbUrlCache = new Map();
+const THUMB_FETCH_CONCURRENCY = 6;
+let thumbFetchActive = 0;
+const thumbFetchQueue = [];
+
+function runThumbFetchQueue() {
+  while (thumbFetchActive < THUMB_FETCH_CONCURRENCY && thumbFetchQueue.length) {
+    thumbFetchActive += 1;
+    const job = thumbFetchQueue.shift();
+    job
+      .run()
+      .then(job.resolve, job.reject)
+      .finally(() => {
+        thumbFetchActive -= 1;
+        runThumbFetchQueue();
+      });
+  }
+}
+
+function enqueueThumbFetch(run) {
+  return new Promise((resolve, reject) => {
+    thumbFetchQueue.push({ run, resolve, reject });
+    runThumbFetchQueue();
+  });
+}
 
 async function getPhotoThumbUrl(jobId, photo) {
   const cached = photoThumbUrlCache.get(photo.id);
   if (cached) return cached;
-  const blob = await apiClient.fetchJobPhotoThumbBlob(jobId, photo.id);
-  const url = URL.createObjectURL(blob);
-  photoThumbUrlCache.set(photo.id, url);
-  return url;
+  return enqueueThumbFetch(async () => {
+    const hit = photoThumbUrlCache.get(photo.id);
+    if (hit) return hit;
+    const blob = await apiClient.fetchJobPhotoThumbBlob(jobId, photo.id);
+    const url = URL.createObjectURL(blob);
+    photoThumbUrlCache.set(photo.id, url);
+    return url;
+  });
 }
 
 async function getDocThumbUrl(jobId, doc) {
   const cached = docThumbUrlCache.get(doc.id);
   if (cached) return cached;
-  const blob = await apiClient.fetchJobDocumentThumbBlob(jobId, doc.id);
-  const url = URL.createObjectURL(blob);
-  docThumbUrlCache.set(doc.id, url);
-  return url;
+  return enqueueThumbFetch(async () => {
+    const hit = docThumbUrlCache.get(doc.id);
+    if (hit) return hit;
+    const blob = await apiClient.fetchJobDocumentThumbBlob(jobId, doc.id);
+    const url = URL.createObjectURL(blob);
+    docThumbUrlCache.set(doc.id, url);
+    return url;
+  });
+}
+
+function loadLazyThumbIntoImg(img) {
+  if (!img || img.dataset.thumbLoaded === "1" || img.src) return;
+  const kind = img.dataset.lazyThumb;
+  const jobId = Number(img.dataset.jobId);
+  const itemId = Number(img.dataset.itemId);
+  if (!kind || !jobId || !itemId) return;
+  img.dataset.thumbLoaded = "1";
+  const load =
+    kind === "photo"
+      ? getPhotoThumbUrl(jobId, { id: itemId })
+      : getDocThumbUrl(jobId, { id: itemId });
+  load
+    .then((url) => {
+      img.src = url;
+    })
+    .catch(() => {
+      img.dataset.thumbLoaded = "";
+    });
+}
+
+function loadCardBackThumbnails(jobId) {
+  const card = getCardById(jobId);
+  if (!card) return;
+  const back = card.querySelector(".face--back");
+  if (!back) return;
+  for (const img of back.querySelectorAll("img[data-lazy-thumb]")) {
+    loadLazyThumbIntoImg(img);
+  }
 }
 
 const MOBILE_CARD_QUERY = "(max-width: 639px)";
@@ -662,6 +973,9 @@ function getJobById(jobId) {
 }
 
 function jobSearchHay(job) {
+  const feedNoteBits = Array.isArray(job.job_notes)
+    ? job.job_notes.flatMap((n) => [n.author_username, n.body])
+    : [];
   return [
     job.customer_name,
     job.address,
@@ -669,6 +983,8 @@ function jobSearchHay(job) {
     job.permit_number,
     job.permit_status,
     job.pool_type,
+    job.notes,
+    ...feedNoteBits,
   ]
     .filter(Boolean)
     .join(" ")
@@ -716,7 +1032,8 @@ function canArchive() {
 }
 
 function canEditJobAdmin() {
-  return state.user?.role === "admin";
+  const role = state.user?.role;
+  return role === "admin" || role === "office";
 }
 
 function canManageUsers() {
@@ -856,6 +1173,11 @@ function refreshOpenJobBoundModalsAfterSync() {
   if (photosModal && !photosModal.hidden && photosModalState.jobId != null) {
     const j = getJobById(photosModalState.jobId);
     if (j) renderPhotosModalContent(j);
+  }
+  const notesModal = $("#notes-modal");
+  if (notesModal && !notesModal.hidden && notesModalState.jobId != null) {
+    const j = getJobById(notesModalState.jobId);
+    if (j) renderNotesModalContent(j);
   }
 }
 
@@ -1248,6 +1570,14 @@ const apiClient = {
     if (!res.ok) throw new Error(await parseFetchError(res));
     return res.blob();
   },
+  fetchSchedulePdfBlob: async (includeArchived = false) => {
+    const params = new URLSearchParams();
+    if (includeArchived) params.set("include_archived", "true");
+    const qs = params.toString();
+    const res = await authFetch(`/jobs/schedule.pdf${qs ? `?${qs}` : ""}`);
+    if (!res.ok) throw new Error(await parseFetchError(res));
+    return res.blob();
+  },
 };
 
 async function uploadJobPhotosSequential(jobId, files) {
@@ -1293,20 +1623,32 @@ function renderFront(job) {
   const { progress, overall_status } = job;
   const pct = progress.percent || 0;
 
-  const meta = el("dl", { class: "card__meta" });
-  function addMeta(label, value) {
-    if (!value) return;
-    meta.appendChild(el("dt", {}, label));
-    meta.appendChild(el("dd", { title: value }, value));
-  }
-  addMeta("Permit #", job.permit_number || "");
-  addMeta("Field Mgr", job.field_manager || "");
-  addMeta("P or PS", job.pool_type || "");
-  addMeta("Permit", job.permit_status || "");
+  const metaCompact = renderCardMetaCompact(job);
+  const recentNotesBlock = renderRecentJobNotesPreview(job);
 
-  const latestText = progress.latest_label
-    ? `Last: ${progress.latest_label}${progress.latest_completed_at ? " - " + fmtDate(progress.latest_completed_at) : ""}`
-    : "No tasks completed yet";
+  let lastTaskValue;
+  let lastTaskValueClass = "card__last-task-value";
+  if (progress.latest_label) {
+    const datePart = progress.latest_completed_at ? fmtDate(progress.latest_completed_at) : "";
+    lastTaskValue = datePart ? `${progress.latest_label} · ${datePart}` : progress.latest_label;
+  } else {
+    lastTaskValue = "None yet";
+    lastTaskValueClass += " card__last-task-value--empty";
+  }
+
+  const lastTaskBlock = el("div", { class: "card__last-task" }, [
+    el("span", { class: "card__last-task-label" }, "Last completed"),
+    el("span", { class: lastTaskValueClass }, lastTaskValue),
+  ]);
+
+  const progressBlock = el("div", { class: "card__progress" }, [
+    el("div", { class: "card__progress-row" }, [
+      el("strong", { class: "card__progress-count" }, `${progress.completed}/${progress.total}`),
+    ]),
+    el("div", { class: "progressbar" }, [
+      el("div", { class: "progressbar__fill", style: `width:${pct}%` }),
+    ]),
+  ]);
 
   const badges = [
     el("span", { class: "card__status-badge" }, statusLabel(overall_status)),
@@ -1366,18 +1708,6 @@ function renderFront(job) {
     );
   }
 
-  const notesPreview = truncateJobNotesPreview(job.notes);
-  const notesPreviewEl =
-    notesPreview &&
-    el(
-      "p",
-      {
-        class: "card__notes-preview",
-        ...(notesPreview.truncated ? { title: notesPreview.full } : {}),
-      },
-      notesPreview.text
-    );
-
   return el(
     "div",
     {
@@ -1393,17 +1723,10 @@ function renderFront(job) {
       ]),
       el("h3", { class: "card__customer" }, job.customer_name),
       el("p", { class: "card__address" }, job.address || "No address"),
-      notesPreviewEl,
-      el("div", { class: "card__progress" }, [
-        el("div", { class: "card__progress-row" }, [
-          el("span", {}, latestText),
-          el("strong", {}, `${progress.completed}/${progress.total}`),
-        ]),
-        el("div", { class: "progressbar" }, [
-          el("div", { class: "progressbar__fill", style: `width:${pct}%` }),
-        ]),
-      ]),
-      meta,
+      recentNotesBlock,
+      lastTaskBlock,
+      progressBlock,
+      metaCompact,
       el("div", { class: "card__hint" }, "Tap to open"),
     ]
   );
@@ -1565,12 +1888,12 @@ function renderJobDocs(job) {
         decoding: "async",
         width: 40,
         height: 52,
+        dataset: {
+          lazyThumb: "doc",
+          jobId: String(job.id),
+          itemId: String(doc.id),
+        },
       });
-      getDocThumbUrl(job.id, doc)
-        .then((url) => {
-          thumbImg.src = url;
-        })
-        .catch(() => {});
 
       list.appendChild(
         el("li", { class: "job-docs__item" }, [
@@ -1699,7 +2022,17 @@ function renderJobDocs(job) {
   return el("section", { class: "job-docs", "aria-label": "Job documents" }, children);
 }
 
-function renderJobNotesFeed(job) {
+async function syncJobNotesAfterChange(job, afterChange) {
+  const refreshed = await apiClient.listJobNotes(job.id);
+  const updated = { ...job, job_notes: refreshed };
+  replaceJob(updated);
+  afterChange?.(updated);
+  return updated;
+}
+
+/** @param {object} job @param {{ afterChange?: (job: object) => void }} [opts] */
+function buildJobNotesFeedBody(job, opts = {}) {
+  const { afterChange } = opts;
   const notes = Array.isArray(job.job_notes) ? job.job_notes : [];
   const body = el("div", { class: "job-notes-feed__body" });
   const list = el("ul", { class: "job-notes-feed__list" });
@@ -1727,9 +2060,7 @@ function renderJobNotesFeed(job) {
                 if (!confirm("Delete this note?")) return;
                 try {
                   await apiClient.deleteJobNote(job.id, note.id);
-                  const refreshed = await apiClient.listJobNotes(job.id);
-                  const updated = { ...job, job_notes: refreshed };
-                  replaceJob(updated);
+                  await syncJobNotesAfterChange(job, afterChange);
                   toast("Note deleted", "success");
                 } catch (err) {
                   toast(`Failed to delete note: ${err.message}`, "error");
@@ -1772,9 +2103,8 @@ function renderJobNotesFeed(job) {
           }
           try {
             await apiClient.createJobNote(job.id, { body: bodyText });
-            const refreshed = await apiClient.listJobNotes(job.id);
-            const updated = { ...job, job_notes: refreshed };
-            replaceJob(updated);
+            textarea.value = "";
+            await syncJobNotesAfterChange(job, afterChange);
             toast("Note added", "success");
           } catch (err) {
             toast(`Failed to add note: ${err.message}`, "error");
@@ -1786,10 +2116,16 @@ function renderJobNotesFeed(job) {
     body.appendChild(el("div", { class: "job-notes-feed__composer-wrap" }, [textarea, submit]));
   }
 
+  return body;
+}
+
+function renderJobNotesFeed(job) {
+  const notes = Array.isArray(job.job_notes) ? job.job_notes : [];
+  const feedBody = buildJobNotesFeedBody(job);
   return el("section", { class: "job-notes-feed", "aria-label": "Job notes feed" }, [
     el("details", { class: "job-notes-feed__accordion" }, [
       el("summary", { class: "job-notes-feed__accordion-summary" }, `Job Notes (${notes.length})`),
-      body,
+      feedBody,
     ]),
   ]);
 }
@@ -1822,14 +2158,12 @@ function renderJobPhotos(job) {
         alt: photo.original_filename || `Photo ${idx + 1}`,
         loading: "lazy",
         decoding: "async",
+        dataset: {
+          lazyThumb: "photo",
+          jobId: String(job.id),
+          itemId: String(photo.id),
+        },
       });
-      getPhotoThumbUrl(job.id, photo)
-        .then((url) => {
-          img.src = url;
-        })
-        .catch(() => {
-          // Leave the thumb empty if loading fails; the modal surfaces the error.
-        });
       const thumb = el(
         "button",
         {
@@ -2000,6 +2334,23 @@ function renderBack(job) {
           },
         },
         "Edit"
+      )
+    );
+  }
+  if (canCreateJob()) {
+    headerRight.push(
+      el(
+        "button",
+        {
+          type: "button",
+          class: "btn btn--ghost",
+          title: "Clone this job with new details",
+          onclick: async (e) => {
+            e.stopPropagation();
+            await openCloneJobModal(job);
+          },
+        },
+        "Clone"
       )
     );
   }
@@ -2445,12 +2796,17 @@ function getCardById(jobId) {
   return document.querySelector(`.card[data-id="${jobId}"]`);
 }
 
+function clearActiveDetailIntent() {
+  state.activeDetailJobId = null;
+  state.activeDetailNoOverlay = false;
+}
+
 function getFlippedCards() {
   return $$(".card.is-flipped");
 }
 
 function hasOpenMobileCardOverlay() {
-  return isMobileCardOverlayViewport() && getFlippedCards().length > 0;
+  return isMobileCardOverlayViewport() && Boolean(document.querySelector(".card.is-flipped.card--mobile-overlay"));
 }
 
 function setCardOverlayPageState() {
@@ -2497,6 +2853,7 @@ function onMobileCardPopstate() {
   for (const card of getFlippedCards()) {
     card.classList.remove("is-flipped", "card--mobile-overlay", "card--desktop-overlay");
   }
+  clearActiveDetailIntent();
   setCardOverlayPageState();
 }
 
@@ -2504,6 +2861,7 @@ function closeMobileCardOverlay() {
   for (const card of getFlippedCards()) {
     card.classList.remove("is-flipped", "card--mobile-overlay", "card--desktop-overlay");
   }
+  clearActiveDetailIntent();
   setCardOverlayPageState();
   syncMobileCardHistoryAfterOverlayClosed();
 }
@@ -2512,6 +2870,7 @@ function closeDesktopCardOverlay() {
   for (const card of getFlippedCards()) {
     card.classList.remove("is-flipped", "card--desktop-overlay", "card--mobile-overlay");
   }
+  clearActiveDetailIntent();
   setCardOverlayPageState();
 }
 
@@ -2521,6 +2880,16 @@ function closeActiveCardOverlay() {
     return;
   }
   closeDesktopCardOverlay();
+}
+
+function keepCardOpenWithoutOverlay(jobId) {
+  const card = getCardById(jobId);
+  if (!card || !card.classList.contains("is-flipped")) return;
+  state.activeDetailJobId = Number(jobId);
+  state.activeDetailNoOverlay = true;
+  card.classList.remove("card--mobile-overlay", "card--desktop-overlay");
+  setCardOverlayPageState();
+  syncMobileCardHistoryAfterOverlayClosed();
 }
 
 function closeOtherFlippedCards(activeJobId) {
@@ -2537,9 +2906,14 @@ function flipCard(jobId, flipped) {
   const nextFlipped = !!flipped;
   const mobileOverlayMode = nextFlipped && isMobileCardOverlayViewport();
   const desktopOverlayMode = nextFlipped && isDesktopCardOverlayViewport();
+  const idNum = Number(jobId);
 
   if (nextFlipped) {
     closeOtherFlippedCards(jobId);
+    state.activeDetailJobId = idNum;
+    state.activeDetailNoOverlay = false;
+  } else if (state.activeDetailJobId === idNum) {
+    clearActiveDetailIntent();
   }
 
   card.classList.toggle("is-flipped", nextFlipped);
@@ -2554,6 +2928,9 @@ function flipCard(jobId, flipped) {
     ensureMobileCardHistoryEntryForOverlay();
   }
   syncMobileCardHistoryAfterOverlayClosed();
+  if (nextFlipped) {
+    requestAnimationFrame(() => loadCardBackThumbnails(jobId));
+  }
 }
 
 // ---- State sync & rendering --------------------------------------------
@@ -2641,6 +3018,23 @@ function exitOverviewToCards() {
   renderAll();
 }
 
+async function exportSchedulePdf() {
+  const btn = $("#overview-export-pdf-btn");
+  if (btn) btn.disabled = true;
+  try {
+    const includeArchived = state.user?.role === "admin" && state.includeArchived;
+    const blob = await apiClient.fetchSchedulePdfBlob(includeArchived);
+    const today = new Date();
+    const stamp = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+    triggerBlobDownload(blob, `Schedules-${stamp}.pdf`);
+    toast("Schedule PDF downloaded.", "success");
+  } catch (err) {
+    toast(err?.message || "Could not export schedule PDF.", "error");
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
 function buildOverviewPanel() {
   const backBtn = el(
     "button",
@@ -2651,9 +3045,21 @@ function buildOverviewPanel() {
     },
     "Back to job cards"
   );
+  const exportBtn = el(
+    "button",
+    {
+      type: "button",
+      id: "overview-export-pdf-btn",
+      class: "btn btn--primary overview__export",
+      title: "Download master schedule for all jobs (ignores search filter)",
+      onclick: () => exportSchedulePdf(),
+    },
+    "Export schedule PDF"
+  );
+  const headerActions = el("div", { class: "overview__actions" }, [exportBtn, backBtn]);
   const header = el("div", { class: "overview__header" }, [
     el("h2", { class: "overview__title" }, "Overview"),
-    backBtn,
+    headerActions,
   ]);
   const body = el("div", { class: "overview__body" }, sortedJobsByCompletionDesc().map((job) => buildOverviewRow(job)));
   return el("section", { class: "overview", "aria-label": "Job completion overview" }, [header, body]);
@@ -2776,7 +3182,11 @@ function replaceJob(updatedJob) {
   }
 
   const newCard = renderCard(updatedJob);
-  if (wasFlipped) newCard.classList.add("is-flipped");
+  const newInner = newCard.querySelector(".card-inner");
+  if (wasFlipped) {
+    newInner.classList.add("no-flip-transition");
+    newCard.classList.add("is-flipped");
+  }
   if (wasFlipped && wasMobileOverlay) newCard.classList.add("card--mobile-overlay");
   if (wasFlipped && wasDesktopOverlay) newCard.classList.add("card--desktop-overlay");
 
@@ -2790,9 +3200,12 @@ function replaceJob(updatedJob) {
     const nextBack = newCard.querySelector(".back__body");
     if (nextBack) {
       requestAnimationFrame(() => {
+        newInner.classList.remove("no-flip-transition");
         nextBack.scrollTop = backScrollTop;
         if (focusSnap) restoreEditableFocusAfterCardSwap(newCard, updatedJob.id, focusSnap);
       });
+    } else {
+      requestAnimationFrame(() => newInner.classList.remove("no-flip-transition"));
     }
   } else if (focusSnap) {
     requestAnimationFrame(() => restoreEditableFocusAfterCardSwap(newCard, updatedJob.id, focusSnap));
@@ -2826,6 +3239,7 @@ function replaceJob(updatedJob) {
 function removeJob(jobId) {
   const id = Number(jobId);
   if (!id) return;
+  if (state.activeDetailJobId === id) clearActiveDetailIntent();
   state.jobs = state.jobs.filter((j) => j.id !== id);
   state.jobsById.delete(id);
   const card = document.querySelector(`.card[data-id="${id}"]`);
@@ -2833,6 +3247,7 @@ function removeJob(jobId) {
   if (docsModalState.jobId === id) closeDocsModal();
   if (photosModalState.jobId === id) closePhotosModal();
   if (contactsModalState.jobId === id) closeContactsModal();
+  if (notesModalState.jobId === id) closeNotesModal();
   if (state.view === "overview") {
     renderOverviewBars();
   }
@@ -2854,15 +3269,19 @@ function updateEmptyStateMessage() {
 function renderAll() {
   const grid = $("#grid");
   if (grid) grid.classList.toggle("card-grid--overview", state.view === "overview");
+  if (state.view === "overview") clearActiveDetailIntent();
   $$(".overview", grid).forEach((n) => n.remove());
   $$(".card", grid).forEach((c) => c.remove());
 
   updateEmptyStateMessage();
 
   if (!state.jobs.length) {
+    clearActiveDetailIntent();
     $("#empty-state").hidden = false;
     refreshJobTypeTabs();
     applyFilter();
+    setCardOverlayPageState();
+    syncMobileCardHistoryAfterOverlayClosed();
     return;
   }
   $("#empty-state").hidden = true;
@@ -2875,6 +3294,27 @@ function renderAll() {
   }
   refreshJobTypeTabs();
   applyFilter();
+  setCardOverlayPageState();
+  syncMobileCardHistoryAfterOverlayClosed();
+
+  const detailId = state.activeDetailJobId;
+  if (state.view === "cards" && detailId != null && state.jobsById.has(detailId)) {
+    requestAnimationFrame(() => {
+      if (state.view !== "cards" || state.activeDetailJobId !== detailId) return;
+      if (!state.jobsById.has(detailId)) return;
+      const card = getCardById(detailId);
+      if (!card) return;
+      const inner = card.querySelector(".card-inner");
+      if (inner) inner.classList.add("no-flip-transition");
+      const noOverlay = state.activeDetailNoOverlay;
+      closeOtherFlippedCards(detailId);
+      flipCard(detailId, true);
+      if (noOverlay) keepCardOpenWithoutOverlay(detailId);
+      requestAnimationFrame(() => {
+        if (inner) inner.classList.remove("no-flip-transition");
+      });
+    });
+  }
 }
 
 function jobMatchesActiveFilters(job, q) {
@@ -3038,6 +3478,46 @@ function closeContactsModal() {
   if (body) body.innerHTML = "";
 }
 
+function notesModalAfterChange(updated) {
+  if (notesModalState.jobId === updated.id) renderNotesModalContent(updated);
+}
+
+function renderNotesModalContent(job) {
+  const titleEl = $("#notes-modal-title-text");
+  if (titleEl) titleEl.textContent = job.customer_name || "Job";
+  const body = $("#notes-modal-body");
+  if (!body) return;
+  body.innerHTML = "";
+  const inner = el("div", { class: "notes-modal__body-inner job-notes-feed" });
+  inner.appendChild(buildJobNotesFeedBody(job, { afterChange: notesModalAfterChange }));
+  body.appendChild(inner);
+}
+
+function closeNotesModal() {
+  const modal = $("#notes-modal");
+  if (!modal) return;
+  modal.hidden = true;
+  notesModalState.jobId = null;
+  const body = $("#notes-modal-body");
+  if (body) body.innerHTML = "";
+}
+
+function openNotesModal(jobOrId) {
+  const job = typeof jobOrId === "object" ? jobOrId : getJobById(jobOrId);
+  if (!job) return;
+  closeModal();
+  closeEditJobModal();
+  closeUsersModal();
+  closeContactsDirectoryModal();
+  closeDocsModal();
+  closePhotosModal();
+  closeContactsModal();
+  notesModalState.jobId = job.id;
+  renderNotesModalContent(job);
+  const modal = $("#notes-modal");
+  if (modal) modal.hidden = false;
+}
+
 function telHref(raw) {
   const s = String(raw ?? "").trim();
   if (!s) return "#";
@@ -3128,6 +3608,7 @@ function openContactsModal(jobOrId) {
   closeContactsDirectoryModal();
   closeDocsModal();
   closePhotosModal();
+  closeNotesModal();
   contactsModalState.jobId = job.id;
   renderContactsModalContent(job);
   const modal = $("#contacts-modal");
@@ -3143,6 +3624,7 @@ function openDocsModal(jobOrId) {
   closeContactsDirectoryModal();
   closePhotosModal();
   closeContactsModal();
+  closeNotesModal();
   docsModalState.jobId = job.id;
   renderDocsModalContent(job);
   const modal = $("#docs-modal");
@@ -3675,6 +4157,7 @@ function openPhotosModal(jobOrId, initialIndex = 0) {
   closeContactsDirectoryModal();
   closeDocsModal();
   closeContactsModal();
+  closeNotesModal();
   photosModalState.jobId = job.id;
   const photoCount = Array.isArray(job.photos) ? job.photos.length : 0;
   const requested = Number.isFinite(initialIndex) ? Math.floor(initialIndex) : 0;
@@ -3689,10 +4172,15 @@ function openPhotosModal(jobOrId, initialIndex = 0) {
   if (modal) modal.hidden = false;
 }
 
-function openModal() {
+async function openModal() {
   const modal = $("#modal");
   if (!modal) return;
   modal.hidden = false;
+  if (cloneFromJobId == null) {
+    newJobContactIdsOrder = [];
+    await refreshContactsCatalog();
+    renderNewJobContactsPicker();
+  }
   const first = $("#new-job-form input[name='customer_name']");
   if (first) setTimeout(() => first.focus(), 30);
 }
@@ -3702,6 +4190,50 @@ function closeModal() {
   if (!modal) return;
   modal.hidden = true;
   $("#new-job-form")?.reset();
+  clearNewJobContactsPanel();
+  cloneFromJobId = null;
+  const titleEl = $("#modal-title");
+  if (titleEl) titleEl.textContent = "New Job";
+  const submitBtn = $("#new-job-form button[type='submit']");
+  if (submitBtn) submitBtn.textContent = "Create Job";
+}
+
+async function openCloneJobModal(job) {
+  const modal = $("#modal");
+  const form = $("#new-job-form");
+  if (!modal || !form) return;
+  closeEditJobModal();
+  closeUsersModal();
+  closeContactsDirectoryModal();
+  closeDocsModal();
+  closePhotosModal();
+  closeContactsModal();
+  closeNotesModal();
+  form.reset();
+  clearNewJobContactsPanel();
+  cloneFromJobId = job.id;
+  form.elements.namedItem("customer_name").value = `${job.customer_name || ""} (Copy)`.trim();
+  const jobTypeEl = form.elements.namedItem("job_type");
+  if (jobTypeEl) jobTypeEl.value = normalizeJobType(job.job_type) || job.job_type || "new_construction";
+  form.elements.namedItem("address").value = job.address || "";
+  form.elements.namedItem("pool_type").value = job.pool_type || "";
+  form.elements.namedItem("permit_status").value = job.permit_status || "";
+  form.elements.namedItem("permit_number").value = job.permit_number || "";
+  form.elements.namedItem("field_manager").value = job.field_manager || "";
+  form.elements.namedItem("notes").value = job.notes || "";
+  await refreshContactsCatalog();
+  newJobContactIdsOrder = getJobContactIdsFromJob(job);
+  renderNewJobContactsPicker();
+  const titleEl = $("#modal-title");
+  if (titleEl) titleEl.textContent = "Clone Job";
+  const submitBtn = $("#new-job-form button[type='submit']");
+  if (submitBtn) submitBtn.textContent = "Create Clone";
+  modal.hidden = false;
+  const first = form.querySelector("input[name='customer_name']");
+  if (first) setTimeout(() => {
+    first.focus();
+    first.select();
+  }, 30);
 }
 
 async function openEditJobModal(job) {
@@ -3715,9 +4247,10 @@ async function openEditJobModal(job) {
   closeDocsModal();
   closePhotosModal();
   closeContactsModal();
+  closeNotesModal();
   idInput.value = String(job.id);
   form.elements.namedItem("customer_name").value = job.customer_name || "";
-  form.elements.namedItem("job_type").value = jobTypeLabel(job.job_type);
+  form.elements.namedItem("job_type").value = job.job_type || "new_construction";
   form.elements.namedItem("address").value = job.address || "";
   form.elements.namedItem("pool_type").value = job.pool_type || "";
   form.elements.namedItem("permit_status").value = job.permit_status || "";
@@ -3728,7 +4261,7 @@ async function openEditJobModal(job) {
   editJobContactIdsOrder = getJobContactIdsFromJob(job);
   renderEditJobContactsPicker();
   const deleteBtn = $("#edit-job-delete-btn");
-  if (deleteBtn) deleteBtn.hidden = !canEditJobAdmin();
+  if (deleteBtn) deleteBtn.hidden = !canArchive();
   modal.hidden = false;
   const first = form.querySelector("input[name='customer_name']");
   if (first) setTimeout(() => first.focus(), 30);
@@ -3758,6 +4291,7 @@ function wireModal() {
   const docsModal = $("#docs-modal");
   const contactsModal = $("#contacts-modal");
   const photosModal = $("#photos-modal");
+  const notesModal = $("#notes-modal");
   const taskTemplatesModal = $("#task-templates-modal");
   const feedbackModal = $("#feedback-modal");
   const feedbackReviewModal = $("#feedback-review-modal");
@@ -3816,6 +4350,11 @@ function wireModal() {
       if (e.target.dataset.close === "1") closeContactsModal();
     });
   }
+  if (notesModal) {
+    notesModal.addEventListener("click", (e) => {
+      if (e.target.dataset.close === "1") closeNotesModal();
+    });
+  }
   if (contactsDirectoryModal) {
     contactsDirectoryModal.addEventListener("click", (e) => {
       if (e.target.dataset.close === "1") closeContactsDirectoryModal();
@@ -3861,6 +4400,48 @@ function wireModal() {
       const w = $("#edit-job-contact-new-wrap");
       if (w) w.hidden = true;
       for (const id of ["edit-job-new-label", "edit-job-new-name", "edit-job-new-phone", "edit-job-new-email"]) {
+        const n = document.getElementById(id);
+        if (n) n.value = "";
+      }
+    } catch (err) {
+      toast(err.message, "error");
+    }
+  });
+  $("#new-job-contact-search")?.addEventListener("input", () => renderNewJobContactsPicker());
+  $("#new-job-contact-new-toggle")?.addEventListener("click", (e) => {
+    e.preventDefault();
+    const w = $("#new-job-contact-new-wrap");
+    if (w) w.hidden = !w.hidden;
+  });
+  $("#new-job-contact-new-save")?.addEventListener("click", async (e) => {
+    e.preventDefault();
+    const payload = {};
+    const lab = String($("#new-job-new-label")?.value ?? "").trim();
+    const nam = String($("#new-job-new-name")?.value ?? "").trim();
+    const ph = String($("#new-job-new-phone")?.value ?? "").trim();
+    const em = String($("#new-job-new-email")?.value ?? "").trim();
+    if (lab) payload.label = lab;
+    if (nam) payload.name = nam;
+    if (ph) payload.phone = ph;
+    if (em) payload.email = em;
+    if (!Object.keys(payload).length) {
+      toast("Enter at least one field", "error");
+      return;
+    }
+    try {
+      const created = await apiClient.createContact(payload);
+      await refreshContactsCatalog();
+      if (
+        newJobContactIdsOrder.length < MAX_EDIT_JOB_CONTACTS &&
+        !newJobContactIdsOrder.includes(created.id)
+      ) {
+        newJobContactIdsOrder.push(created.id);
+      }
+      renderNewJobContactsPicker();
+      toast("Contact added to directory and this job", "success");
+      const w = $("#new-job-contact-new-wrap");
+      if (w) w.hidden = true;
+      for (const id of ["new-job-new-label", "new-job-new-name", "new-job-new-phone", "new-job-new-email"]) {
         const n = document.getElementById(id);
         if (n) n.value = "";
       }
@@ -3924,6 +4505,10 @@ function wireModal() {
     }
     if (contactsModal && !contactsModal.hidden) {
       closeContactsModal();
+      return;
+    }
+    if (notesModal && !notesModal.hidden) {
+      closeNotesModal();
       return;
     }
     if (docsModal && !docsModal.hidden) {
@@ -3996,6 +4581,14 @@ function wireModal() {
         toast("Job type is required", "error");
         return;
       }
+      const contactIds = collectNewJobContactIdsPayload();
+      if (contactIds.length > 0) {
+        payload.contact_ids = contactIds;
+      }
+      const wasClone = cloneFromJobId != null;
+      if (wasClone) {
+        payload.clone_from_job_id = cloneFromJobId;
+      }
       try {
         const job = await apiClient.createJob(payload);
         state.jobs.unshift(job);
@@ -4010,7 +4603,12 @@ function wireModal() {
           applyFilter();
         }
         closeModal();
-        toast(`Created job: ${job.customer_name}`, "success");
+        toast(
+          wasClone
+            ? `Cloned job: ${job.customer_name}`
+            : `Created job: ${job.customer_name}`,
+          "success"
+        );
       } catch (err) {
         toast(`Failed to create job: ${err.message}`, "error");
       }
@@ -4037,6 +4635,7 @@ function wireModal() {
       };
       const payload = {
         customer_name,
+        job_type: fd.get("job_type"),
         address: opt("address"),
         pool_type: opt("pool_type"),
         permit_status: opt("permit_status"),
@@ -4058,7 +4657,7 @@ function wireModal() {
   const editDeleteBtn = $("#edit-job-delete-btn");
   if (editDeleteBtn) {
     editDeleteBtn.addEventListener("click", async () => {
-      if (!canEditJobAdmin()) return;
+      if (!canArchive()) return;
       const id = Number($("#edit-job-id")?.value);
       if (!id) {
         toast("Missing job", "error");
@@ -4150,6 +4749,7 @@ function openNotificationsModal() {
   closeDocsModal();
   closePhotosModal();
   closeContactsModal();
+  closeNotesModal();
   closeTaskTemplatesModal();
   modal.hidden = false;
   refreshNotificationsModal();
@@ -4356,6 +4956,7 @@ function openTaskTemplatesModal() {
   closeDocsModal();
   closePhotosModal();
   closeContactsModal();
+  closeNotesModal();
   closeFeedbackModal();
   closeFeedbackReviewModal();
   closeNotificationsModal();
@@ -4720,7 +5321,6 @@ function wireShell() {
     closeAllUserMenus();
     state.view = state.view === "overview" ? "cards" : "overview";
     renderAll();
-    setCardOverlayPageState();
   });
 
   $("#users-modal")?.addEventListener("click", (e) => {

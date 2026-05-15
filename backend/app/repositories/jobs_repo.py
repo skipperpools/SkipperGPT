@@ -76,6 +76,11 @@ def _task_definitions_for_job_type(db: Session, *, job_type: str) -> list[tuple[
     return base
 
 
+def seeded_task_keys_for_job_type(db: Session, *, job_type: str) -> set[str]:
+    """Public: keys of tasks auto-seeded for a job_type (base + admin templates)."""
+    return {k for k, _label in _task_definitions_for_job_type(db, job_type=job_type)}
+
+
 def append_template_tasks_for_job_type(db: Session, *, job: Job, job_type: str) -> int:
     """Append missing template tasks for job_type onto an existing job.
 

@@ -19,7 +19,7 @@ except Exception:  # noqa: BLE001 - missing wheel or libheif at runtime; fall ba
     _HEIF_SUPPORT = False
 
 from ..config import settings
-from ..database import get_db
+from ..database import SessionLocal, get_db
 from ..deps.auth import get_current_user
 from ..models import User
 from ..repositories import jobs_repo
@@ -196,15 +196,16 @@ def download_job_photo_thumbnail(
     job_id: int,
     photo_id: int,
     _user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
 ) -> FileResponse:
-    job = jobs_repo.get_job(db, job_id)
-    if job is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
-    photo = jobs_repo.get_job_photo(db, job_id=job_id, photo_id=photo_id)
-    if photo is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Photo not found")
-    thumb = ensure_photo_thumbnail(settings.docs_root, photo.stored_path)
+    with SessionLocal() as db:
+        job = jobs_repo.get_job(db, job_id)
+        if job is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+        photo = jobs_repo.get_job_photo(db, job_id=job_id, photo_id=photo_id)
+        if photo is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Photo not found")
+        stored_path = photo.stored_path
+    thumb = ensure_photo_thumbnail(settings.docs_root, stored_path)
     if thumb is None or not thumb.is_file():
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
