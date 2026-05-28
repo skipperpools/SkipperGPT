@@ -24,6 +24,7 @@ from ..models import (
     JobDocument,
     JobNote,
     JobPhoto,
+    JobSketch,
     JobTask,
     JobTypeTaskTemplate,
 )
@@ -38,6 +39,8 @@ def _job_load_options() -> tuple:
         selectinload(Job.tasks),
         selectinload(Job.documents).selectinload(JobDocument.uploaded_by),
         selectinload(Job.photos).selectinload(JobPhoto.uploaded_by),
+        selectinload(Job.sketches).selectinload(JobSketch.created_by),
+        selectinload(Job.sketches).selectinload(JobSketch.updated_by),
         selectinload(Job.contact_links).selectinload(JobContactLink.contact),
         selectinload(Job.job_notes).selectinload(JobNote.author),
     )
@@ -301,6 +304,33 @@ def move_job_task(
     return True
 
 
+def reorder_job_task(
+    db: Session, *, job_id: int, task_key: str, target_index: int
+) -> bool:
+    """Move task to target_index (0-based). Returns True when order changed."""
+    rows = list(
+        db.execute(
+            select(JobTask)
+            .where(JobTask.job_id == job_id)
+            .order_by(JobTask.sort_order.asc(), JobTask.id.asc())
+        ).scalars()
+    )
+    if not rows:
+        return False
+    idx = next((i for i, row in enumerate(rows) if row.task_key == task_key), -1)
+    if idx < 0:
+        return False
+    clamped = max(0, min(target_index, len(rows) - 1))
+    if idx == clamped:
+        return False
+    row = rows.pop(idx)
+    rows.insert(clamped, row)
+    for i, row_item in enumerate(rows):
+        row_item.sort_order = i
+    db.commit()
+    return True
+
+
 def delete_job_task(db: Session, *, task: JobTask) -> None:
     """Delete a task and compact remaining sort_order values for the job."""
     job_id = task.job_id
@@ -418,6 +448,61 @@ def add_job_photo(
 
 def delete_job_photo(db: Session, *, photo: JobPhoto) -> None:
     db.delete(photo)
+    db.commit()
+
+
+def get_job_sketch(
+    db: Session, *, job_id: int, sketch_id: int
+) -> Optional[JobSketch]:
+    stmt = select(JobSketch).where(
+        JobSketch.job_id == job_id,
+        JobSketch.id == sketch_id,
+    )
+    return db.execute(stmt).scalar_one_or_none()
+
+
+def add_job_sketch(
+    db: Session,
+    *,
+    job: Job,
+    title: str,
+    stored_json_path: str,
+    stored_preview_path: str,
+    grid_spacing_inches: int,
+    created_by_user_id: Optional[int],
+    updated_by_user_id: Optional[int],
+) -> JobSketch:
+    sketch = JobSketch(
+        job_id=job.id,
+        title=title,
+        stored_json_path=stored_json_path,
+        stored_preview_path=stored_preview_path,
+        grid_spacing_inches=grid_spacing_inches,
+        created_by_user_id=created_by_user_id,
+        updated_by_user_id=updated_by_user_id,
+    )
+    db.add(sketch)
+    db.commit()
+    db.refresh(sketch)
+    return sketch
+
+
+def update_job_sketch(
+    db: Session,
+    *,
+    sketch: JobSketch,
+    fields: dict,
+) -> JobSketch:
+    for key, val in fields.items():
+        setattr(sketch, key, val)
+    db.add(sketch)
+    db.commit()
+    db.refresh(sketch)
+    return sketch
+
+
+def delete_job_sketch(db: Session, *, sketch: JobSketch) -> None:
+    db.delete(sketch)
     db.commit()
 
 

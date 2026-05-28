@@ -31,7 +31,7 @@ from ..services.job_photos_fs import (
     remove_empty_job_photo_dir,
     write_photo_upload,
 )
-from ..services.thumbnails import ensure_photo_thumbnail
+from ..services.thumbnails import ensure_photo_display, ensure_photo_thumbnail
 from ..services.jobs_service import to_job_read
 
 router = APIRouter(tags=["job-photos"])
@@ -180,6 +180,11 @@ async def upload_job_photo(
             settings.docs_root,
             new_photo.stored_path,
         )
+        background_tasks.add_task(
+            ensure_photo_display,
+            settings.docs_root,
+            new_photo.stored_path,
+        )
     except OSError as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -213,6 +218,33 @@ def download_job_photo_thumbnail(
         )
     return FileResponse(
         thumb,
+        media_type="image/webp",
+        headers={"Cache-Control": "public, max-age=31536000, immutable"},
+    )
+
+
+@router.get("/{job_id}/photos/{photo_id}/display")
+def download_job_photo_display(
+    job_id: int,
+    photo_id: int,
+    _user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> FileResponse:
+    job = jobs_repo.get_job(db, job_id)
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    photo = jobs_repo.get_job_photo(db, job_id=job_id, photo_id=photo_id)
+    if photo is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Photo not found")
+    stored_path = photo.stored_path
+    display = ensure_photo_display(settings.docs_root, stored_path)
+    if display is None or not display.is_file():
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Could not generate display image",
+        )
+    return FileResponse(
+        display,
         media_type="image/webp",
         headers={"Cache-Control": "public, max-age=31536000, immutable"},
     )

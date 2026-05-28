@@ -10,15 +10,19 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 
 from .job_docs_fs import absolute_file_path as doc_absolute_path
 from .job_photos_fs import absolute_file_path as photo_absolute_path
+from .job_sketches_fs import absolute_file_path as sketch_absolute_path
 
 logger = logging.getLogger("skipper.thumbnails")
 
 _THUMB_MAX = 480
+_DISPLAY_MAX = 1920
 _WEBP_QUALITY = 80
+_DISPLAY_WEBP_QUALITY = 85
 _WEBP_METHOD = 4
 _THUMBS_DIR = ".thumbs"
+_DISPLAY_DIR = ".display"
 
-Kind = Literal["photo", "document"]
+Kind = Literal["photo", "document", "sketch"]
 
 
 def photo_thumb_relpath(stored_path: str) -> str:
@@ -27,17 +31,31 @@ def photo_thumb_relpath(stored_path: str) -> str:
     return str(p.parent / _THUMBS_DIR / f"{p.stem}.webp").replace("\\", "/")
 
 
+def photo_display_relpath(stored_path: str) -> str:
+    sp = stored_path.replace("\\", "/")
+    p = Path(sp)
+    return str(p.parent / _DISPLAY_DIR / f"{p.stem}.webp").replace("\\", "/")
+
+
 def doc_thumb_relpath(stored_path: str) -> str:
     return photo_thumb_relpath(stored_path)  # same layout under Docs/... vs Photos/...
 
 
-def _atomic_write_webp(dest: Path, im: Image.Image) -> None:
+def _atomic_write_webp(dest: Path, im: Image.Image, *, quality: int = _WEBP_QUALITY) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
     tmp = dest.with_suffix(".webp.part")
     buf = io.BytesIO()
-    im.save(buf, format="WEBP", quality=_WEBP_QUALITY, method=_WEBP_METHOD)
+    im.save(buf, format="WEBP", quality=quality, method=_WEBP_METHOD)
     tmp.write_bytes(buf.getvalue())
     tmp.replace(dest)
+
+
+def _prepare_rgb_for_webp(im: Image.Image) -> Image.Image:
+    if im.mode == "RGBA":
+        bg = Image.new("RGB", im.size, (255, 255, 255))
+        bg.paste(im, mask=im.split()[3])
+        return bg
+    return im.convert("RGB")
 
 
 def ensure_photo_thumbnail(docs_root: Path, stored_path: str) -> Path | None:
@@ -66,15 +84,95 @@ def ensure_photo_thumbnail(docs_root: Path, stored_path: str) -> Path | None:
             im.seek(0)
             im = ImageOps.exif_transpose(im)
             im.thumbnail((_THUMB_MAX, _THUMB_MAX), Image.Resampling.LANCZOS)
-            if im.mode == "RGBA":
-                bg = Image.new("RGB", im.size, (255, 255, 255))
-                bg.paste(im, mask=im.split()[3])
-                im = bg
-            else:
-                im = im.convert("RGB")
+            im = _prepare_rgb_for_webp(im)
             _atomic_write_webp(thumb_abs, im)
     except (UnidentifiedImageError, OSError, ValueError) as exc:
         logger.warning("Photo thumbnail failed for %s: %s", stored_path, exc)
+        return None
+
+    return thumb_abs if thumb_abs.is_file() else None
+
+
+def ensure_photo_display(docs_root: Path, stored_path: str) -> Path | None:
+    """Create display-size WebP next to original if missing or stale. Returns path or None."""
+    try:
+        original = photo_absolute_path(docs_root, stored_path)
+    except ValueError:
+        logger.warning("Invalid photo stored_path for display: %s", stored_path)
+        return None
+
+    if not original.is_file():
+        return None
+
+    display_rel = photo_display_relpath(stored_path)
+    try:
+        display_abs = photo_absolute_path(docs_root, display_rel)
+    except ValueError:
+        logger.warning("Invalid display path for photo: %s", display_rel)
+        return None
+
+    if display_abs.is_file():
+        try:
+            if original.stat().st_mtime <= display_abs.stat().st_mtime:
+                return display_abs
+        except OSError:
+            pass
+        try:
+            display_abs.unlink()
+        except OSError:
+            pass
+
+    try:
+        with Image.open(original) as im:
+            im.seek(0)
+            im = ImageOps.exif_transpose(im)
+            im.thumbnail((_DISPLAY_MAX, _DISPLAY_MAX), Image.Resampling.LANCZOS)
+            im = _prepare_rgb_for_webp(im)
+            _atomic_write_webp(display_abs, im, quality=_DISPLAY_WEBP_QUALITY)
+    except (UnidentifiedImageError, OSError, ValueError) as exc:
+        logger.warning("Photo display failed for %s: %s", stored_path, exc)
+        return None
+
+    return display_abs if display_abs.is_file() else None
+
+
+def ensure_sketch_thumbnail(docs_root: Path, stored_path: str) -> Path | None:
+    """Create WebP thumbnail from sketch preview PNG."""
+    try:
+        original = sketch_absolute_path(docs_root, stored_path)
+    except ValueError:
+        logger.warning("Invalid sketch stored_path for thumbnail: %s", stored_path)
+        return None
+
+    if not original.is_file():
+        return None
+
+    thumb_rel = photo_thumb_relpath(stored_path)
+    try:
+        thumb_abs = sketch_absolute_path(docs_root, thumb_rel)
+    except ValueError:
+        logger.warning("Invalid thumb path for sketch: %s", thumb_rel)
+        return None
+
+    if thumb_abs.is_file():
+        try:
+            if original.stat().st_mtime <= thumb_abs.stat().st_mtime:
+                return thumb_abs
+        except OSError:
+            pass
+        try:
+            thumb_abs.unlink()
+        except OSError:
+            pass
+
+    try:
+        with Image.open(original) as im:
+            im = ImageOps.exif_transpose(im)
+            im.thumbnail((_THUMB_MAX, _THUMB_MAX), Image.Resampling.LANCZOS)
+            im = _prepare_rgb_for_webp(im)
+            _atomic_write_webp(thumb_abs, im)
+    except (UnidentifiedImageError, OSError, ValueError) as exc:
+        logger.warning("Sketch thumbnail failed for %s: %s", stored_path, exc)
         return None
 
     return thumb_abs if thumb_abs.is_file() else None
@@ -138,8 +236,24 @@ def delete_thumbnail_for(docs_root: Path, stored_path: str, kind: Kind) -> None:
     try:
         if kind == "photo":
             p = photo_absolute_path(docs_root, rel)
+        elif kind == "sketch":
+            p = sketch_absolute_path(docs_root, rel)
         else:
             p = doc_absolute_path(docs_root, rel)
+    except ValueError:
+        return
+    if p.is_file():
+        try:
+            p.unlink()
+        except OSError:
+            pass
+
+
+def delete_display_for(docs_root: Path, stored_path: str) -> None:
+    """Remove photo display file if it exists (best-effort)."""
+    rel = photo_display_relpath(stored_path)
+    try:
+        p = photo_absolute_path(docs_root, rel)
     except ValueError:
         return
     if p.is_file():

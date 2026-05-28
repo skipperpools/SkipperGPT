@@ -4,12 +4,14 @@ from __future__ import annotations
 from datetime import datetime
 from typing import List, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .auth_utils import assert_password_within_bcrypt_limit
 from .constants import (
     JOB_TYPE_NEW_CONSTRUCTION,
     MAX_JOB_CONTACTS,
+    USER_TASK_NOTE_MAX,
+    USER_TASK_TITLE_MAX,
     VALID_JOB_TYPES,
     VALID_DOC_CATEGORIES,
     VALID_FEEDBACK_KINDS,
@@ -58,15 +60,26 @@ class JobTaskCreate(BaseModel):
 
 
 class JobTaskMove(BaseModel):
-    direction: str = Field(..., min_length=1, max_length=8)
+    direction: Optional[str] = Field(None, min_length=1, max_length=8)
+    target_index: Optional[int] = Field(None, ge=0)
 
     @field_validator("direction")
     @classmethod
-    def _validate_direction(cls, v: str) -> str:
+    def _validate_direction(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
         vv = v.strip().lower()
         if vv not in {"up", "down"}:
             raise ValueError("direction must be 'up' or 'down'")
         return vv
+
+    @model_validator(mode="after")
+    def _validate_move_payload(self) -> "JobTaskMove":
+        has_direction = self.direction is not None
+        has_target = self.target_index is not None
+        if has_direction == has_target:
+            raise ValueError("Provide exactly one of direction or target_index")
+        return self
 
 
 class JobProgress(BaseModel):
@@ -123,6 +136,22 @@ class JobPhotoRead(BaseModel):
     uploaded_by_username: Optional[str] = None
 
 
+class JobSketchRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    job_id: int
+    title: str
+    grid_spacing_inches: int
+    content_version: int
+    created_at: datetime
+    updated_at: datetime
+    created_by_user_id: Optional[int] = None
+    created_by_username: Optional[str] = None
+    updated_by_user_id: Optional[int] = None
+    updated_by_username: Optional[str] = None
+
+
 class JobNoteRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -137,6 +166,22 @@ class JobNoteRead(BaseModel):
 
 class JobNoteCreate(BaseModel):
     body: str = Field(..., min_length=1, max_length=8000)
+
+    @field_validator("body", mode="before")
+    @classmethod
+    def _strip_body(cls, v: object) -> object:
+        if v is None:
+            return v
+        if isinstance(v, str):
+            return v.strip()
+        return v
+
+    @field_validator("body")
+    @classmethod
+    def _require_non_empty_body(cls, v: str) -> str:
+        if not v:
+            raise ValueError("Note body cannot be empty")
+        return v
 
 
 class JobContactEntry(BaseModel):
@@ -296,11 +341,13 @@ class JobRead(BaseModel):
     tasks: List[JobTaskRead] = []
     documents: List[JobDocumentRead] = []
     photos: List[JobPhotoRead] = []
+    sketches: List[JobSketchRead] = []
     job_notes: List[JobNoteRead] = []
     progress: JobProgress
     overall_status: str
     docs_rel_path: Optional[str] = None
     photos_rel_path: Optional[str] = None
+    sketches_rel_path: Optional[str] = None
 
 
 class JobTypeTaskTemplateCreate(BaseModel):
@@ -439,6 +486,44 @@ class FeedbackAdminUpdate(BaseModel):
         if v not in VALID_FEEDBACK_STATUS:
             raise ValueError(f"status must be one of {sorted(VALID_FEEDBACK_STATUS)}")
         return v
+
+
+class UserTaskRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    user_id: int
+    title: str
+    completed: bool
+    note: Optional[str] = None
+    sort_order: int
+    completed_at: Optional[datetime] = None
+    created_at: datetime
+    updated_at: datetime
+    owner_username: Optional[str] = None
+
+
+class UserTaskCreate(BaseModel):
+    title: str = Field(..., min_length=1, max_length=USER_TASK_TITLE_MAX)
+    note: Optional[str] = Field(None, max_length=USER_TASK_NOTE_MAX)
+
+
+class UserTaskUpdate(BaseModel):
+    title: Optional[str] = Field(None, min_length=1, max_length=USER_TASK_TITLE_MAX)
+    note: Optional[str] = Field(None, max_length=USER_TASK_NOTE_MAX)
+    completed: Optional[bool] = None
+
+
+class UserTaskMove(BaseModel):
+    direction: str = Field(..., min_length=1, max_length=8)
+
+    @field_validator("direction")
+    @classmethod
+    def _validate_direction(cls, v: str) -> str:
+        vv = v.strip().lower()
+        if vv not in {"up", "down"}:
+            raise ValueError("direction must be 'up' or 'down'")
+        return vv
 
 
 class NotificationRead(BaseModel):

@@ -41,3 +41,6 @@ desktop.ini
 
 # Logs
 *.log
+
+client_secret*.json
+API Keys/

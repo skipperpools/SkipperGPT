@@ -88,6 +88,12 @@ class User(Base):
         foreign_keys="JobNote.author_user_id",
         passive_deletes=True,
     )
+    user_tasks: Mapped[List["UserTask"]] = relationship(
+        back_populates="owner",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="UserTask.sort_order",
+    )
 
 
 class Job(Base):
@@ -121,6 +127,8 @@ class Job(Base):
     docs_folder_name: Mapped[Optional[str]] = mapped_column(String(180), nullable=True)
     # Resolved folder name under {docs_root}/Photos/{photos_folder_name}/ (see job_photos_paths).
     photos_folder_name: Mapped[Optional[str]] = mapped_column(String(180), nullable=True)
+    # Resolved folder name under {docs_root}/Sketches/{sketches_folder_name}/ (see job_sketches_paths).
+    sketches_folder_name: Mapped[Optional[str]] = mapped_column(String(180), nullable=True)
 
     tasks: Mapped[List["JobTask"]] = relationship(
         back_populates="job",
@@ -139,6 +147,12 @@ class Job(Base):
         cascade="all, delete-orphan",
         passive_deletes=True,
         order_by="JobPhoto.uploaded_at",
+    )
+    sketches: Mapped[List["JobSketch"]] = relationship(
+        back_populates="job",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="JobSketch.updated_at",
     )
     contact_links: Mapped[List["JobContactLink"]] = relationship(
         back_populates="job",
@@ -286,6 +300,47 @@ class JobPhoto(Base):
     )
 
 
+class JobSketch(Base):
+    __tablename__ = "job_sketches"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    job_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("jobs.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    stored_json_path: Mapped[str] = mapped_column(String(512), nullable=False)
+    stored_preview_path: Mapped[str] = mapped_column(String(512), nullable=False)
+    stored_bg_path: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    grid_spacing_inches: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
+    content_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+    created_by_user_id: Mapped[Optional[int]] = mapped_column(
+        Integer,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    updated_by_user_id: Mapped[Optional[int]] = mapped_column(
+        Integer,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+    job: Mapped[Job] = relationship(back_populates="sketches")
+    created_by: Mapped[Optional["User"]] = relationship(foreign_keys=[created_by_user_id])
+    updated_by: Mapped[Optional["User"]] = relationship(foreign_keys=[updated_by_user_id])
+
+
 class FeedbackItem(Base):
     __tablename__ = "feedback_items"
 
@@ -313,6 +368,38 @@ class FeedbackItem(Base):
     )
 
     author: Mapped["User"] = relationship(foreign_keys=[user_id])
+
+
+class UserTask(Base):
+    __tablename__ = "user_tasks"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    completed: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="0"
+    )
+    note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    owner: Mapped["User"] = relationship(back_populates="user_tasks")
 
 
 class NotificationItem(Base):

@@ -125,9 +125,10 @@ def write_photo_upload(
 
 
 def delete_photo_file(docs_root: Path, photo: JobPhoto) -> None:
-    from .thumbnails import delete_thumbnail_for  # noqa: PLC0415 — avoid circular import
+    from .thumbnails import delete_display_for, delete_thumbnail_for  # noqa: PLC0415
 
     delete_thumbnail_for(docs_root, photo.stored_path, "photo")
+    delete_display_for(docs_root, photo.stored_path)
     p = absolute_file_path(docs_root, photo.stored_path)
     if p.is_file():
         p.unlink()
@@ -137,8 +138,9 @@ def remove_empty_job_photo_dir(docs_root: Path, job: Job) -> None:
     if not job.photos_folder_name:
         return
     d = absolute_job_photos_dir(docs_root, job.photos_folder_name)
-    thumbs = d / ".thumbs"
-    if thumbs.is_dir() and not any(thumbs.iterdir()):
-        thumbs.rmdir()
+    for sub in (".thumbs", ".display"):
+        aux = d / sub
+        if aux.is_dir() and not any(aux.iterdir()):
+            aux.rmdir()
     if d.is_dir() and not any(d.iterdir()):
         d.rmdir()

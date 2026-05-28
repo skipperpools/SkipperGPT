@@ -15,7 +15,7 @@ Runs on the office PC against a local SQLite database.
 - Job-level notes and "needs attention" flag per task.
 - New Job modal with auto-seeded default tasks (**admin** and **office** roles).
 - JWT login with roles: **admin**, **office**, and **field** (field staff can update checklist and notes; document upload and job metadata follow role rules below).
-- Job document uploads (PDF) with **field** vs **permit** category; job photo uploads (JPG/PNG/WEBP/GIF, plus HEIC/HEIF when optional backend dependency is installed).
+- Job document uploads (PDF) with **field**, **permit**, **sales**, or **invoices** category; job photo uploads (JPG/PNG/WEBP/GIF, plus HEIC/HEIF when optional backend dependency is installed).
 - Billing milestone notifications for office/admin when certain steps are marked complete; mark items **billed** from the notifications list.
 - User-submitted feedback (requests / bugs); admins can triage and reply with an admin note.
 - Search by customer, address, manager, or permit number.
@@ -249,7 +249,7 @@ Send `Authorization: Bearer <token>` on protected routes (obtained from **`POST 
 | Method | Path | Purpose |
 | ------ | ---- | ------- |
 | GET | `/api/jobs/{id}/documents` | List PDF documents |
-| POST | `/api/jobs/{id}/documents` | Multipart: one or more **`files`**, optional **`title`** (single-file), **`category`** = `field` or `permit` (**admin**, **office**) |
+| POST | `/api/jobs/{id}/documents` | Multipart: one or more **`files`**, optional **`title`** (single-file), **`category`** = `field`, `permit`, `sales`, or `invoices` (**admin**, **office**) |
 | PATCH | `/api/jobs/{id}/documents/{docId}` | Rename document (`title`) (**admin**, **office**) |
 | GET | `/api/jobs/{id}/documents/{docId}/file` | Download PDF |
 | DELETE | `/api/jobs/{id}/documents/{docId}` | Delete document (**admin**, **office**) |
@@ -312,7 +312,7 @@ Send `Authorization: Bearer <token>` on protected routes (obtained from **`POST 
 }
 ```
 
-Documents include **`category`** (`field` | `permit`), **`uploaded_by_user_id`**, and **`uploaded_by_username`** when available. Photos similarly include uploader fields.
+Documents include **`category`** (`field` | `permit` | `sales` | `invoices`), **`uploaded_by_user_id`**, and **`uploaded_by_username`** when available. Photos similarly include uploader fields.
 
 `progress.latest_completed_at` reflects the **task date** (`value` as `YYYY-MM-DD` on the latest completed task), not when the task was checked off (`completed_at`).
 

@@ -22,12 +22,14 @@ from ..schemas import (
     JobDocumentRead,
     JobNoteRead,
     JobPhotoRead,
+    JobSketchRead,
     JobProgress,
     JobRead,
     JobTaskRead,
 )
 from .job_docs_paths import docs_dir_relative
 from .job_photos_paths import photos_dir_relative
+from .job_sketches_paths import sketches_dir_relative
 
 _ISO_DATE_RE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})$")
 
@@ -116,6 +118,23 @@ def to_job_read(job: Job) -> JobRead:
         )
         for p in photos_sorted
     ]
+    sketches_sorted = sorted(job.sketches, key=lambda s: (s.updated_at, s.id), reverse=True)
+    sketches = [
+        JobSketchRead(
+            id=s.id,
+            job_id=s.job_id,
+            title=s.title,
+            grid_spacing_inches=int(s.grid_spacing_inches),
+            content_version=int(s.content_version),
+            created_at=s.created_at,
+            updated_at=s.updated_at,
+            created_by_user_id=s.created_by_user_id,
+            created_by_username=s.created_by.username if s.created_by else None,
+            updated_by_user_id=s.updated_by_user_id,
+            updated_by_username=s.updated_by.username if s.updated_by else None,
+        )
+        for s in sketches_sorted
+    ]
     notes_sorted = sorted(job.job_notes, key=lambda n: (n.created_at, n.id), reverse=True)
     job_notes = [
         JobNoteRead(
@@ -163,6 +182,7 @@ def to_job_read(job: Job) -> JobRead:
         tasks=[JobTaskRead.model_validate(t) for t in tasks_sorted],
         documents=documents,
         photos=photos,
+        sketches=sketches,
         job_notes=job_notes,
         progress=progress,
         overall_status=overall_status,
@@ -171,6 +191,9 @@ def to_job_read(job: Job) -> JobRead:
         else None,
         photos_rel_path=photos_dir_relative(job.photos_folder_name)
         if job.photos_folder_name
+        else None,
+        sketches_rel_path=sketches_dir_relative(job.sketches_folder_name)
+        if job.sketches_folder_name
         else None,
     )
 

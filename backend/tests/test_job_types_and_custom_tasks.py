@@ -150,6 +150,55 @@ class JobTypesAndCustomTasksTests(unittest.TestCase):
         denied_delete = self.client.delete(f"/api/jobs/{job_id}/tasks/{first_key}")
         self.assertEqual(denied_delete.status_code, 403, denied_delete.text)
 
+    def test_reorder_task_to_target_index(self) -> None:
+        create_res = self.client.post(
+            "/api/jobs",
+            json={"customer_name": "Target Index Job", "job_type": "misc"},
+        )
+        self.assertEqual(create_res.status_code, 201, create_res.text)
+        payload = create_res.json()
+        job_id = payload["id"]
+        tasks = payload["tasks"]
+        self.assertGreaterEqual(len(tasks), 2)
+        first_key = tasks[0]["task_key"]
+        last_index = len(tasks) - 1
+
+        move_res = self.client.patch(
+            f"/api/jobs/{job_id}/tasks/{first_key}/move",
+            json={"target_index": last_index},
+        )
+        self.assertEqual(move_res.status_code, 200, move_res.text)
+        moved_keys = [t["task_key"] for t in move_res.json()["tasks"]]
+        self.assertEqual(moved_keys[-1], first_key)
+        self.assertEqual(moved_keys[0], tasks[1]["task_key"])
+
+    def test_move_task_payload_validation(self) -> None:
+        create_res = self.client.post(
+            "/api/jobs",
+            json={"customer_name": "Move Validation Job", "job_type": "misc"},
+        )
+        self.assertEqual(create_res.status_code, 201, create_res.text)
+        payload = create_res.json()
+        job_id = payload["id"]
+        task_key = payload["tasks"][0]["task_key"]
+        move_url = f"/api/jobs/{job_id}/tasks/{task_key}/move"
+
+        both_res = self.client.patch(
+            move_url,
+            json={"direction": "up", "target_index": 0},
+        )
+        self.assertEqual(both_res.status_code, 422, both_res.text)
+
+        neither_res = self.client.patch(move_url, json={})
+        self.assertEqual(neither_res.status_code, 422, neither_res.text)
+
+        negative_res = self.client.patch(move_url, json={"target_index": -1})
+        self.assertEqual(negative_res.status_code, 422, negative_res.text)
+
+        self.current_user.role = "field"
+        denied_res = self.client.patch(move_url, json={"target_index": 1})
+        self.assertEqual(denied_res.status_code, 403, denied_res.text)
+
     def test_sales_jobs_start_empty_and_can_use_sales_templates(self) -> None:
         base_sales = self.client.post(
             "/api/jobs",

@@ -7,7 +7,7 @@
     <link rel="icon" type="image/x-icon" href="/graphics/favicon.ico" />
     <link rel="alternate icon" href="/graphics/favicon.ico" />
     <title>Skipper Pools - Job Card Dashboard</title>
-    <link rel="stylesheet" href="/styles.css?v=20260506-3" />
+    <link rel="stylesheet" href="/styles.css?v=20260519-4" />
   </head>
   <body>
     <div id="login-screen" class="login-screen">
@@ -56,6 +56,7 @@
             <div id="user-menu" class="topbar__menu" role="menu" hidden>
               <button id="menu-new-job-btn" class="topbar__menu-item" type="button" role="menuitem" data-menu-action="new-job">+ New Job</button>
               <button id="menu-feedback-btn" class="topbar__menu-item" type="button" role="menuitem" data-menu-action="feedback">Requests</button>
+              <button id="menu-user-tasks-btn" class="topbar__menu-item" type="button" role="menuitem" data-menu-action="user-tasks">My tasks</button>
               <button id="menu-notifications-btn" class="topbar__menu-item" type="button" role="menuitem" data-menu-action="notifications" hidden>
                 Billing notifications
               </button>
@@ -375,6 +376,51 @@
         </div>
       </div>
 
+      <!-- Personal task list -->
+      <div id="user-tasks-modal" class="modal" hidden>
+        <div class="modal__backdrop" data-close="1"></div>
+        <div class="modal__panel modal__panel--wide" aria-labelledby="user-tasks-modal-title">
+          <header class="modal__header">
+            <h2 id="user-tasks-modal-title">My tasks</h2>
+            <button type="button" class="btn btn--ghost" data-close="1" aria-label="Close">x</button>
+          </header>
+          <div class="modal__body modal__body--scroll">
+            <form id="user-tasks-form">
+              <label class="field">
+                <span>Title *</span>
+                <input id="user-task-title" name="title" type="text" required maxlength="255" placeholder="What needs to be done?" />
+              </label>
+              <label class="field">
+                <span>Note (optional)</span>
+                <textarea id="user-task-note" name="note" rows="2" maxlength="8000" placeholder="Optional details…"></textarea>
+              </label>
+            </form>
+            <div id="user-tasks-mine-list" class="user-tasklist"></div>
+          </div>
+          <footer class="modal__footer">
+            <button type="button" class="btn btn--ghost" data-close="1">Close</button>
+            <button type="submit" form="user-tasks-form" class="btn btn--primary">Add task</button>
+          </footer>
+        </div>
+      </div>
+
+      <!-- Admin: per-user tasks (opened from Users table) -->
+      <div id="user-tasks-admin-modal" class="modal" hidden>
+        <div class="modal__backdrop" data-close="1"></div>
+        <div class="modal__panel modal__panel--wide" aria-labelledby="user-tasks-admin-modal-title">
+          <header class="modal__header">
+            <h2 id="user-tasks-admin-modal-title">Tasks — <span id="user-tasks-admin-username"></span></h2>
+            <button type="button" class="btn btn--ghost" data-close="1" aria-label="Close">x</button>
+          </header>
+          <div class="modal__body modal__body--scroll">
+            <div id="user-tasks-admin-list" class="user-tasklist"></div>
+          </div>
+          <footer class="modal__footer">
+            <button type="button" class="btn btn--ghost" data-close="1">Close</button>
+          </footer>
+        </div>
+      </div>
+
       <!-- Billing notifications -->
       <div id="notifications-modal" class="modal" hidden>
         <div class="modal__backdrop" data-close="1"></div>
@@ -433,9 +479,7 @@
           </header>
           <div class="modal__body photos-modal__body">
             <div class="photos-modal__toolbar">
-              <button id="photos-modal-prev-btn" type="button" class="btn btn--ghost btn--sm" aria-label="Previous page">Prev</button>
               <span id="photos-modal-selection" class="photos-modal__selection"></span>
-              <button id="photos-modal-next-btn" type="button" class="btn btn--ghost btn--sm" aria-label="Next page">Next</button>
               <div class="photos-modal__toolbar-spacer"></div>
               <button id="photos-modal-download-btn" type="button" class="btn btn--ghost btn--sm">Download</button>
               <button id="photos-modal-remove-btn" type="button" class="btn btn--ghost btn--sm" hidden>Remove</button>
@@ -471,6 +515,27 @@
         </div>
       </div>
 
+      <!-- Sketches modal -->
+      <div id="sketches-modal" class="modal" hidden>
+        <div class="modal__backdrop" data-close="1"></div>
+        <div class="modal__panel modal__panel--wide sketches-modal__panel" aria-labelledby="sketches-modal-title">
+          <header class="modal__header">
+            <h2 id="sketches-modal-title">Sketches - <span id="sketches-modal-title-text"></span></h2>
+            <button type="button" class="btn btn--ghost" data-close="1" aria-label="Close">x</button>
+          </header>
+          <div class="modal__body sketches-modal__body">
+            <div class="sketches-modal__toolbar">
+              <button id="sketches-modal-new-btn" type="button" class="btn btn--primary btn--sm">+ New sketch</button>
+              <div class="sketches-modal__toolbar-spacer"></div>
+              <button id="sketches-modal-open-btn" type="button" class="btn btn--ghost btn--sm" disabled>Open</button>
+              <button id="sketches-modal-rename-btn" type="button" class="btn btn--ghost btn--sm" disabled>Rename</button>
+              <button id="sketches-modal-delete-btn" type="button" class="btn btn--ghost btn--sm" disabled>Delete</button>
+            </div>
+            <div id="sketches-modal-main" class="sketches-modal__main" aria-label="Sketch list"></div>
+          </div>
+        </div>
+      </div>
+
       <!-- Mobile account menu modal -->
       <div id="mobile-user-menu-modal" class="modal mobile-user-menu-modal" hidden>
         <div class="modal__backdrop" data-close="1"></div>
@@ -482,6 +547,7 @@
           <div class="modal__body mobile-user-menu-modal__body">
             <button class="topbar__menu-item mobile-user-menu-modal__item" type="button" role="menuitem" data-menu-action="new-job">+ New Job</button>
             <button class="topbar__menu-item mobile-user-menu-modal__item" type="button" role="menuitem" data-menu-action="feedback">Requests</button>
+            <button class="topbar__menu-item mobile-user-menu-modal__item" type="button" role="menuitem" data-menu-action="user-tasks">My tasks</button>
             <button class="topbar__menu-item mobile-user-menu-modal__item" type="button" role="menuitem" data-menu-action="notifications" hidden>
               Billing notifications
             </button>
@@ -498,6 +564,101 @@
             </button>
             <button class="topbar__menu-item mobile-user-menu-modal__item" type="button" role="menuitem" data-menu-action="logout">Log out</button>
           </div>
+        </div>
+      </div>
+
+      <!-- Full-screen sketch editor (above modals) -->
+      <div id="sketch-editor-overlay" class="sketch-editor" hidden role="dialog" aria-modal="true" aria-label="Sketch editor">
+        <header class="sketch-editor__header">
+          <div class="sketch-editor__title-wrap">
+            <h2 id="sketch-editor-title" class="sketch-editor__title">Sketch</h2>
+            <span id="sketch-editor-unsaved" class="sketch-editor__unsaved" hidden>Unsaved</span>
+          </div>
+          <div class="sketch-editor__header-actions">
+            <button id="sketch-editor-save-btn" type="button" class="btn btn--primary btn--sm">Save</button>
+            <button id="sketch-editor-close-btn" type="button" class="btn btn--ghost btn--sm" aria-label="Close">Close</button>
+          </div>
+        </header>
+        <div class="sketch-editor__toolbar" role="toolbar" aria-label="Drawing tools">
+          <div class="sketch-editor__tool-block">
+            <span class="sketch-editor__tool-label" id="sketch-editor-label-tool">Tool</span>
+            <div class="sketch-editor__tool-group" role="group" aria-labelledby="sketch-editor-label-tool">
+              <button type="button" class="sketch-editor__tool is-active" data-tool="pen" title="Pen">Pen</button>
+              <button type="button" class="sketch-editor__tool" data-tool="line" title="Line">Line</button>
+              <button type="button" class="sketch-editor__tool" data-tool="eraser" title="Eraser">Erase</button>
+              <button type="button" class="sketch-editor__tool" data-tool="pan" title="Pan">Pan</button>
+            </div>
+          </div>
+          <div id="sketch-editor-style-group" class="sketch-editor__style-group">
+            <div class="sketch-editor__tool-block">
+              <span class="sketch-editor__tool-label" id="sketch-editor-label-color">Color</span>
+              <div class="sketch-editor__color-swatches" role="group" aria-labelledby="sketch-editor-label-color">
+              <button type="button" class="sketch-editor__color-swatch is-active" data-color="#111111" title="Black" style="--swatch-color: #111111"></button>
+              <button type="button" class="sketch-editor__color-swatch" data-color="#c41e3a" title="Red" style="--swatch-color: #c41e3a"></button>
+              <button type="button" class="sketch-editor__color-swatch" data-color="#1e5aa8" title="Blue" style="--swatch-color: #1e5aa8"></button>
+              <button type="button" class="sketch-editor__color-swatch" data-color="#2d7d46" title="Green" style="--swatch-color: #2d7d46"></button>
+              <button type="button" class="sketch-editor__color-swatch" data-color="#e67e22" title="Orange" style="--swatch-color: #e67e22"></button>
+              <button type="button" class="sketch-editor__color-swatch" data-color="#7b2cbf" title="Purple" style="--swatch-color: #7b2cbf"></button>
+              <label class="sketch-editor__color-custom" title="Custom color">
+                <input type="color" id="sketch-editor-color-picker" class="sketch-editor__color-picker-input" value="#111111" aria-labelledby="sketch-editor-label-color" />
+                <span class="sketch-editor__color-custom-btn" aria-hidden="true"></span>
+              </label>
+            </div>
+            </div>
+            <div class="sketch-editor__tool-block">
+              <span class="sketch-editor__tool-label" id="sketch-editor-label-size">Size</span>
+              <div class="sketch-editor__size-btns" role="group" aria-labelledby="sketch-editor-label-size">
+                <button type="button" class="sketch-editor__size-btn" data-width="1" title="Thin (1px)">1</button>
+                <button type="button" class="sketch-editor__size-btn is-active" data-width="2" title="Medium (2px)">2</button>
+                <button type="button" class="sketch-editor__size-btn" data-width="4" title="Thick (4px)">4</button>
+                <button type="button" class="sketch-editor__size-btn" data-width="8" title="Bold (8px)">8</button>
+              </div>
+            </div>
+          </div>
+          <div class="sketch-editor__tool-block">
+            <span class="sketch-editor__tool-label" id="sketch-editor-label-grid">Grid</span>
+            <div class="sketch-editor__tool-row" role="group" aria-labelledby="sketch-editor-label-grid">
+              <div class="sketch-editor__tool-group">
+                <button type="button" class="sketch-editor__grid-btn" data-grid-inches="1">1&quot;</button>
+                <button type="button" class="sketch-editor__grid-btn" data-grid-inches="3">3&quot;</button>
+                <button type="button" class="sketch-editor__grid-btn" data-grid-inches="6">6&quot;</button>
+                <button type="button" class="sketch-editor__grid-btn" data-grid-inches="12">12&quot;</button>
+              </div>
+              <button id="sketch-editor-snap-btn" type="button" class="sketch-editor__toggle is-active" title="Snap to grid">Snap</button>
+            </div>
+          </div>
+          <div class="sketch-editor__tool-block">
+            <span class="sketch-editor__tool-label" id="sketch-editor-label-edit">Edit</span>
+            <div class="sketch-editor__tool-group" role="group" aria-labelledby="sketch-editor-label-edit">
+              <button id="sketch-editor-undo-btn" type="button" class="btn btn--ghost btn--sm">Undo</button>
+              <button id="sketch-editor-redo-btn" type="button" class="btn btn--ghost btn--sm">Redo</button>
+            </div>
+          </div>
+          <div class="sketch-editor__tool-block">
+            <span class="sketch-editor__tool-label" id="sketch-editor-label-photo">Photo</span>
+            <div class="sketch-editor__tool-group" role="group" aria-labelledby="sketch-editor-label-photo">
+              <button id="sketch-editor-bg-btn" type="button" class="btn btn--ghost btn--sm">Add</button>
+              <button id="sketch-editor-fit-btn" type="button" class="btn btn--ghost btn--sm">Fit grid</button>
+              <button id="sketch-editor-bg-adjust-btn" type="button" class="sketch-editor__toggle" title="Move background">Move BG</button>
+            </div>
+          </div>
+        </div>
+        <div id="sketch-editor-viewport" class="sketch-editor__viewport">
+          <div id="sketch-editor-stage" class="sketch-editor__stage">
+            <canvas id="sketch-editor-canvas" class="sketch-editor__canvas" width="2400" height="1800"></canvas>
+          </div>
+        </div>
+        <div id="sketch-editor-bg-picker" class="sketch-editor__bg-picker" hidden>
+          <header class="sketch-editor__bg-picker-header">
+            <h3>Background photo</h3>
+            <button id="sketch-editor-bg-picker-close" type="button" class="btn btn--ghost btn--sm">Close</button>
+          </header>
+          <label class="sketch-editor__bg-upload">
+            <span>Upload from device</span>
+            <input id="sketch-editor-bg-upload" type="file" accept="image/*" hidden />
+          </label>
+          <p class="sketch-editor__bg-picker-label">From job photos</p>
+          <div id="sketch-editor-bg-photos" class="sketch-editor__bg-photos"></div>
         </div>
       </div>
 
@@ -520,6 +681,7 @@
     <!-- Toasts: outside app shell so login errors are visible -->
     <div id="toasts" class="toasts" aria-live="assertive"></div>
 
-    <script src="/app.js?v=20260507-1" defer></script>
+    <script src="/sketch-editor.js?v=20260519-3" defer></script>
+    <script src="/app.js?v=20260519-2" defer></script>
   </body>
 </html>

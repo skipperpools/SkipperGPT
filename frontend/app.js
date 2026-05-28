@@ -24,6 +24,9 @@ const state = {
   activeDetailJobId: null,
   /** when true with activeDetailJobId, restore flipped card without modal overlay (see keepCardOpenWithoutOverlay) */
   activeDetailNoOverlay: false,
+  /** Admin nested tasks modal: user whose list is being edited */
+  adminTasksUserId: null,
+  adminTasksUsername: null,
 };
 
 const POLL_BASE_INTERVAL_MS = 5000;
@@ -37,6 +40,8 @@ const poller = {
     notifications: { inFlight: false, failCount: 0, lastSig: "" },
     feedbackMine: { inFlight: false, failCount: 0, lastSig: "" },
     feedbackAll: { inFlight: false, failCount: 0, lastSig: "" },
+    userTasksMine: { inFlight: false, failCount: 0, lastSig: "" },
+    userTasksAll: { inFlight: false, failCount: 0, lastSig: "" },
     users: { inFlight: false, failCount: 0, lastSig: "" },
     contacts: { inFlight: false, failCount: 0, lastSig: "" },
   },
@@ -61,13 +66,16 @@ const contactsModalState = {
 const photosModalState = {
   jobId: null,
   selectedIndex: 0,
-  pageIndex: 0,
+};
+
+const sketchesModalState = {
+  jobId: null,
+  selectedSketchId: null,
 };
 
 const notesModalState = {
   jobId: null,
 };
-const PHOTOS_MODAL_PAGE_SIZE = 12;
 
 const photoViewerState = {
   objectUrl: null,
@@ -99,6 +107,7 @@ const photoViewerGesture = {
 
 // Card-back thumbnail grid: 4 columns x 2 rows.
 const VISIBLE_PHOTO_COUNT = 8;
+const VISIBLE_SKETCH_COUNT = 4;
 /** Max feed notes shown on the unflipped card front. */
 const RECENT_JOB_NOTES_COUNT = 3;
 /** Max chars per feed note body on the card front. */
@@ -131,12 +140,10 @@ function truncateNoteBody(body, maxLen = RECENT_JOB_NOTE_BODY_MAX) {
 }
 
 /**
- * @param {Array<{ id?: number, created_at?: string }>|null|undefined} notes
- * @param {number} [limit]
+ * @param {{ body?: string|null }|null|undefined} note
  */
-function sliceRecentJobNotes(notes, limit = RECENT_JOB_NOTES_COUNT) {
-  if (!Array.isArray(notes) || !notes.length) return [];
-  return notes.slice(0, limit);
+function noteHasDisplayBody(note) {
+  return Boolean((note?.body ?? "").trim());
 }
 
 function openNotesModalFromCard(e, job) {
@@ -154,18 +161,19 @@ function onRecentNotesPreviewKeydown(e, job) {
 /** @returns {HTMLElement} */
 function renderRecentJobNotesPreview(job) {
   const allNotes = Array.isArray(job.job_notes) ? job.job_notes : [];
-  const recent = sliceRecentJobNotes(allNotes);
+  const displayableNotes = allNotes.filter(noteHasDisplayBody);
+  const recent = displayableNotes.slice(0, RECENT_JOB_NOTES_COUNT);
   const total = allNotes.length;
-  const moreCount = total - recent.length;
+  const moreCount = displayableNotes.length - recent.length;
   const labelText =
     total > RECENT_JOB_NOTES_COUNT ? `Recent Notes (${total})` : "Recent Notes";
 
   const children = [el("span", { class: "card__section-label" }, labelText)];
 
   if (!recent.length) {
-    children.push(
-      el("p", { class: "card__recent-notes__empty-hint" }, "No notes yet — tap to add")
-    );
+    const emptyHint =
+      total > 0 ? "Notes have no text — tap to open" : "No notes yet — tap to add";
+    children.push(el("p", { class: "card__recent-notes__empty-hint" }, emptyHint));
   } else {
     if (moreCount > 0) {
       children.push(
@@ -538,9 +546,12 @@ async function openContactsDirectoryModal() {
   closeUsersModal();
   closeFeedbackModal();
   closeFeedbackReviewModal();
+  closeUserTasksModal();
+  closeUserTasksAdminModal();
   closeNotificationsModal();
   closeDocsModal();
   closePhotosModal();
+  closeSketchesModal();
   closeContactsModal();
   closeNotesModal();
   modal.hidden = false;
@@ -741,6 +752,7 @@ async function refreshContactsDirectoryModal() {
 // leak is bounded by the number of distinct photos viewed.
 const photoThumbUrlCache = new Map();
 const docThumbUrlCache = new Map();
+const sketchThumbUrlCache = new Map();
 const THUMB_FETCH_CONCURRENCY = 6;
 let thumbFetchActive = 0;
 const thumbFetchQueue = [];
@@ -792,6 +804,25 @@ async function getDocThumbUrl(jobId, doc) {
   });
 }
 
+function invalidateSketchThumbCache(sketchId) {
+  const url = sketchThumbUrlCache.get(sketchId);
+  if (url) URL.revokeObjectURL(url);
+  sketchThumbUrlCache.delete(sketchId);
+}
+
+async function getSketchThumbUrl(jobId, sketch) {
+  const cached = sketchThumbUrlCache.get(sketch.id);
+  if (cached) return cached;
+  return enqueueThumbFetch(async () => {
+    const hit = sketchThumbUrlCache.get(sketch.id);
+    if (hit) return hit;
+    const blob = await apiClient.fetchJobSketchThumbBlob(jobId, sketch.id);
+    const url = URL.createObjectURL(blob);
+    sketchThumbUrlCache.set(sketch.id, url);
+    return url;
+  });
+}
+
 function loadLazyThumbIntoImg(img) {
   if (!img || img.dataset.thumbLoaded === "1" || img.src) return;
   const kind = img.dataset.lazyThumb;
@@ -802,7 +833,9 @@ function loadLazyThumbIntoImg(img) {
   const load =
     kind === "photo"
       ? getPhotoThumbUrl(jobId, { id: itemId })
-      : getDocThumbUrl(jobId, { id: itemId });
+      : kind === "sketch"
+        ? getSketchThumbUrl(jobId, { id: itemId })
+        : getDocThumbUrl(jobId, { id: itemId });
   load
     .then((url) => {
       img.src = url;
@@ -880,6 +913,54 @@ function fmtDate(iso) {
   } catch {
     return "";
   }
+}
+
+function photoLocalDateKey(iso) {
+  if (!iso) return "";
+  try {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return "";
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+  } catch {
+    return "";
+  }
+}
+
+function photoUploadedAtMs(photo) {
+  if (!photo?.uploaded_at) return 0;
+  const t = new Date(photo.uploaded_at).getTime();
+  return Number.isNaN(t) ? 0 : t;
+}
+
+/** Newest uploads first; matches card/modal grouping order. */
+function getJobPhotosOrdered(job) {
+  const photos = Array.isArray(job?.photos) ? job.photos.slice() : [];
+  return photos.sort((a, b) => {
+    const ta = photoUploadedAtMs(a);
+    const tb = photoUploadedAtMs(b);
+    if (tb !== ta) return tb - ta;
+    return (b.id || 0) - (a.id || 0);
+  });
+}
+
+function groupPhotosByUploadDate(photos) {
+  const groups = [];
+  const byKey = new Map();
+  for (const photo of photos) {
+    const key = photoLocalDateKey(photo.uploaded_at) || "__unknown__";
+    const label =
+      key === "__unknown__" ? "Unknown date" : fmtDate(photo.uploaded_at) || "Unknown date";
+    if (!byKey.has(key)) {
+      const group = { key, label, photos: [] };
+      byKey.set(key, group);
+      groups.push(group);
+    }
+    byKey.get(key).photos.push(photo);
+  }
+  return groups;
 }
 
 function fmtDateTime(iso) {
@@ -1128,29 +1209,64 @@ function markChannelFailure(ch) {
   ch.nextRunAt = Date.now() + channelBackoffMs(ch);
 }
 
+function jobSignatureFields(job) {
+  return {
+    id: job.id,
+    archived: job.archived,
+    updated_at: job.updated_at,
+    permit_status: job.permit_status,
+    notes: job.notes,
+    tasks: Array.isArray(job.tasks)
+      ? job.tasks.map((t) => [t.id, t.status, t.value, t.note, t.completed_at, t.completed_by, t.sort_order])
+      : [],
+    documents: Array.isArray(job.documents)
+      ? job.documents.map((d) => [d.id, d.title, d.uploaded_at, d.category, d.size_bytes])
+      : [],
+    photos: Array.isArray(job.photos) ? job.photos.map((p) => [p.id, p.uploaded_at, p.size_bytes]) : [],
+    contacts: Array.isArray(job.contacts)
+      ? job.contacts.map((c) => [c.id, c.label, c.name, c.phone, c.email])
+      : [],
+    job_notes: Array.isArray(job.job_notes)
+      ? job.job_notes.map((n) => [n.id, n.author_user_id, n.created_at, n.body])
+      : [],
+  };
+}
+
+function jobSignature(job) {
+  return JSON.stringify(jobSignatureFields(job));
+}
+
 function jobsSignature(list) {
   if (!Array.isArray(list)) return "";
-  const compact = list.map((j) => ({
-    id: j.id,
-    archived: j.archived,
-    updated_at: j.updated_at,
-    permit_status: j.permit_status,
-    notes: j.notes,
-    tasks: Array.isArray(j.tasks)
-      ? j.tasks.map((t) => [t.id, t.status, t.value, t.note, t.completed_at, t.completed_by, t.sort_order])
-      : [],
-    documents: Array.isArray(j.documents)
-      ? j.documents.map((d) => [d.id, d.title, d.uploaded_at, d.category, d.size_bytes])
-      : [],
-    photos: Array.isArray(j.photos) ? j.photos.map((p) => [p.id, p.uploaded_at, p.size_bytes]) : [],
-    contacts: Array.isArray(j.contacts)
-      ? j.contacts.map((c) => [c.id, c.label, c.name, c.phone, c.email])
-      : [],
-    job_notes: Array.isArray(j.job_notes)
-      ? j.job_notes.map((n) => [n.id, n.author_user_id, n.created_at, n.body])
-      : [],
-  }));
-  return JSON.stringify(compact);
+  return JSON.stringify(list.map(jobSignatureFields));
+}
+
+function syncJobsPollSignature() {
+  poller.channels.jobs.lastSig = jobsSignature(state.jobs);
+}
+
+function syncJobsFromPoll(jobs) {
+  const newIds = jobs.map((j) => j.id).sort((a, b) => a - b);
+  const oldIds = state.jobs.map((j) => j.id).sort((a, b) => a - b);
+  const structuralChange =
+    newIds.length !== oldIds.length || newIds.some((id, i) => id !== oldIds[i]);
+
+  if (structuralChange) {
+    state.jobs = jobs;
+    state.jobsById = new Map(jobs.map((j) => [j.id, j]));
+    renderAll();
+    return;
+  }
+
+  const oldSigById = new Map(state.jobs.map((j) => [j.id, jobSignature(j)]));
+  state.jobs = jobs;
+  state.jobsById = new Map(jobs.map((j) => [j.id, j]));
+
+  for (const job of jobs) {
+    if (oldSigById.get(job.id) !== jobSignature(job)) {
+      replaceJob(job);
+    }
+  }
 }
 
 function simpleSignature(list) {
@@ -1190,9 +1306,7 @@ async function pollJobsChannel() {
     const sig = jobsSignature(jobs);
     if (sig !== ch.lastSig) {
       ch.lastSig = sig;
-      state.jobs = jobs;
-      state.jobsById = new Map(jobs.map((j) => [j.id, j]));
-      renderAll();
+      syncJobsFromPoll(jobs);
       refreshOpenJobBoundModalsAfterSync();
     }
     markChannelSuccess(ch);
@@ -1224,6 +1338,54 @@ async function pollNotificationsChannel() {
     markChannelFailure(ch);
   } finally {
     ch.inFlight = false;
+  }
+}
+
+function userTasksSignature(items) {
+  return simpleSignature(
+    (items ?? []).map((t) => [t.id, t.title, t.completed, t.note, t.sort_order])
+  );
+}
+
+async function pollUserTasksChannel() {
+  const mine = poller.channels.userTasksMine;
+  if (!mine.inFlight && isChannelDue(mine)) {
+    mine.inFlight = true;
+    try {
+      const items = await apiClient.listMyUserTasks();
+      const sig = userTasksSignature(items);
+      if (sig !== mine.lastSig) {
+        mine.lastSig = sig;
+        const modal = $("#user-tasks-modal");
+        if (modal && !modal.hidden) await refreshUserTasksMineList();
+      }
+      markChannelSuccess(mine);
+    } catch {
+      markChannelFailure(mine);
+    } finally {
+      mine.inFlight = false;
+    }
+  }
+
+  if (!canManageUsers()) return;
+  const all = poller.channels.userTasksAll;
+  if (all.inFlight || !isChannelDue(all)) return;
+  const modal = $("#user-tasks-admin-modal");
+  const userId = state.adminTasksUserId;
+  if (!modal || modal.hidden || !userId) return;
+  all.inFlight = true;
+  try {
+    const items = await apiClient.listAllUserTasks(userId);
+    const sig = userTasksSignature(items);
+    if (sig !== all.lastSig) {
+      all.lastSig = sig;
+      await refreshUserTasksAdminList();
+    }
+    markChannelSuccess(all);
+  } catch {
+    markChannelFailure(all);
+  } finally {
+    all.inFlight = false;
   }
 }
 
@@ -1316,6 +1478,7 @@ async function runPollCycle() {
   await pollJobsChannel();
   await pollNotificationsChannel();
   await pollFeedbackChannel();
+  await pollUserTasksChannel();
   await pollUsersChannel();
   await pollContactsChannel();
 }
@@ -1495,10 +1658,10 @@ const apiClient = {
       method: "POST",
       body: { target_job_type: targetJobType },
     }),
-  moveJobTask: (id, taskKey, direction) =>
+  moveJobTask: (id, taskKey, payload) =>
     api(`/jobs/${id}/tasks/${encodeURIComponent(taskKey)}/move`, {
       method: "PATCH",
-      body: { direction },
+      body: payload,
     }),
   deleteJobTask: (id, taskKey) =>
     api(`/jobs/${id}/tasks/${encodeURIComponent(taskKey)}`, { method: "DELETE" }),
@@ -1516,6 +1679,16 @@ const apiClient = {
   listMyFeedback: () => api("/feedback/mine"),
   listAllFeedback: () => api("/feedback"),
   updateFeedback: (id, payload) => api(`/feedback/${id}`, { method: "PATCH", body: payload }),
+  listMyUserTasks: () => api("/user-tasks/mine"),
+  listAllUserTasks: (userId) => {
+    const q = userId != null ? `?user_id=${encodeURIComponent(userId)}` : "";
+    return api(`/user-tasks${q}`);
+  },
+  createUserTask: (payload) => api("/user-tasks", { method: "POST", body: payload }),
+  updateUserTask: (id, payload) => api(`/user-tasks/${id}`, { method: "PATCH", body: payload }),
+  deleteUserTask: (id) => api(`/user-tasks/${id}`, { method: "DELETE" }),
+  moveUserTask: (id, direction) =>
+    api(`/user-tasks/${id}/move`, { method: "PATCH", body: { direction } }),
   listNotifications: () => api("/notifications"),
   updateNotification: (id, payload) => api(`/notifications/${id}`, { method: "PATCH", body: payload }),
   uploadJobDocument: async (jobId, files, title, category = "field") => {
@@ -1526,7 +1699,8 @@ const apiClient = {
     const t = String(title || "").trim();
     if (t) fd.append("title", t);
     const c = String(category || "field").trim().toLowerCase();
-    fd.append("category", c === "permit" ? "permit" : "field");
+    const allowed = new Set(["field", "permit", "sales", "invoices"]);
+    fd.append("category", allowed.has(c) ? c : "field");
     const res = await authFetch(`/jobs/${jobId}/documents`, { method: "POST", body: fd });
     if (!res.ok) throw new Error(await parseFetchError(res));
     return res.json();
@@ -1560,6 +1734,11 @@ const apiClient = {
     if (!res.ok) throw new Error(await parseFetchError(res));
     return res.blob();
   },
+  fetchJobPhotoDisplayBlob: async (jobId, photoId) => {
+    const res = await authFetch(`/jobs/${jobId}/photos/${photoId}/display`);
+    if (!res.ok) throw new Error(await parseFetchError(res));
+    return res.blob();
+  },
   fetchJobPhotoThumbBlob: async (jobId, photoId) => {
     const res = await authFetch(`/jobs/${jobId}/photos/${photoId}/thumbnail`);
     if (!res.ok) throw new Error(await parseFetchError(res));
@@ -1567,6 +1746,36 @@ const apiClient = {
   },
   fetchJobDocumentThumbBlob: async (jobId, documentId) => {
     const res = await authFetch(`/jobs/${jobId}/documents/${documentId}/thumbnail`);
+    if (!res.ok) throw new Error(await parseFetchError(res));
+    return res.blob();
+  },
+  createJobSketch: (jobId, payload) =>
+    api(`/jobs/${jobId}/sketches`, { method: "POST", body: payload }),
+  fetchJobSketchDocument: (jobId, sketchId) => api(`/jobs/${jobId}/sketches/${sketchId}`),
+  saveJobSketch: async (jobId, sketchId, { document, preview, background, contentVersion }) => {
+    const fd = new FormData();
+    fd.append("document", JSON.stringify(document));
+    if (contentVersion != null) fd.append("content_version", String(contentVersion));
+    fd.append("preview", preview, "preview.png");
+    if (background) fd.append("background", background, "background.jpg");
+    const res = await authFetch(`/jobs/${jobId}/sketches/${sketchId}`, { method: "PUT", body: fd });
+    if (!res.ok) throw new Error(await parseFetchError(res));
+    return res.json();
+  },
+  renameJobSketch: (jobId, sketchId, title) =>
+    api(`/jobs/${jobId}/sketches/${sketchId}`, { method: "PATCH", body: { title } }),
+  deleteJobSketch: async (jobId, sketchId) => {
+    const res = await authFetch(`/jobs/${jobId}/sketches/${sketchId}`, { method: "DELETE" });
+    if (!res.ok) throw new Error(await parseFetchError(res));
+    return res.json();
+  },
+  fetchJobSketchThumbBlob: async (jobId, sketchId) => {
+    const res = await authFetch(`/jobs/${jobId}/sketches/${sketchId}/thumbnail`);
+    if (!res.ok) throw new Error(await parseFetchError(res));
+    return res.blob();
+  },
+  fetchJobSketchBackgroundBlob: async (jobId, sketchId) => {
+    const res = await authFetch(`/jobs/${jobId}/sketches/${sketchId}/background`);
     if (!res.ok) throw new Error(await parseFetchError(res));
     return res.blob();
   },
@@ -1762,11 +1971,19 @@ function jobTypeLabel(jobType) {
 
 // ---- Job documents (PDFs) -----------------------------------------------
 
+function docCategory(doc) {
+  const c = String(doc?.category || "field").trim().toLowerCase();
+  if (c === "permit" || c === "sales" || c === "invoices") return c;
+  return "field";
+}
+
 function renderJobDocs(job) {
   const docs = Array.isArray(job.documents) ? job.documents : [];
   const canAttach = canAttachJobDocs();
-  const fieldDocs = docs.filter((doc) => (doc.category || "field") !== "permit");
-  const permitDocs = docs.filter((doc) => (doc.category || "field") === "permit");
+  const fieldDocs = docs.filter((doc) => docCategory(doc) === "field");
+  const permitDocs = docs.filter((doc) => docCategory(doc) === "permit");
+  const salesDocs = docs.filter((doc) => docCategory(doc) === "sales");
+  const invoicesDocs = docs.filter((doc) => docCategory(doc) === "invoices");
 
   function buildDocList(listDocs, emptyLabel) {
     const list = el("ul", { class: "job-docs__list" });
@@ -1942,6 +2159,22 @@ function renderJobDocs(job) {
         buildDocList(permitDocs, "No permit PDFs yet."),
       ]
     ),
+    el(
+      "details",
+      { class: "job-docs__accordion" },
+      [
+        el("summary", { class: "job-docs__accordion-summary" }, `Sales Docs (${salesDocs.length})`),
+        buildDocList(salesDocs, "No sales PDFs yet."),
+      ]
+    ),
+    el(
+      "details",
+      { class: "job-docs__accordion" },
+      [
+        el("summary", { class: "job-docs__accordion-summary" }, `Invoices (${invoicesDocs.length})`),
+        buildDocList(invoicesDocs, "No invoice PDFs yet."),
+      ]
+    ),
   ];
 
   if (canAttach) {
@@ -1969,6 +2202,8 @@ function renderJobDocs(job) {
       [
         el("option", { value: "field" }, "Field Docs"),
         el("option", { value: "permit" }, "Permit Docs"),
+        el("option", { value: "sales" }, "Sales Docs"),
+        el("option", { value: "invoices" }, "Invoices"),
       ]
     );
     const uploadStatus = el(
@@ -2131,10 +2366,9 @@ function renderJobNotesFeed(job) {
 }
 
 function renderJobPhotos(job) {
-  const photos = Array.isArray(job.photos) ? job.photos : [];
-  const total = photos.length;
-  const visible = photos.slice(0, VISIBLE_PHOTO_COUNT);
-  const hiddenCount = Math.max(0, total - visible.length);
+  const ordered = getJobPhotosOrdered(job);
+  const total = ordered.length;
+  const hiddenCount = Math.max(0, total - VISIBLE_PHOTO_COUNT);
 
   const headerChildren = [
     el("h4", { class: "job-photos__heading" }, "Photos"),
@@ -2152,36 +2386,55 @@ function renderJobPhotos(job) {
       el("p", { class: "job-photos__empty" }, "No photos yet — click to add.")
     );
   } else {
-    const grid = el("div", { class: "job-photos__grid" });
-    visible.forEach((photo, idx) => {
-      const img = el("img", {
-        alt: photo.original_filename || `Photo ${idx + 1}`,
-        loading: "lazy",
-        decoding: "async",
-        dataset: {
-          lazyThumb: "photo",
-          jobId: String(job.id),
-          itemId: String(photo.id),
-        },
-      });
-      const thumb = el(
-        "button",
-        {
-          type: "button",
-          class: "job-photos__thumb",
-          dataset: { index: String(idx) },
-          title: photo.original_filename || "",
-          "aria-label": `Open ${photo.original_filename || `photo ${idx + 1}`}`,
-          onclick: (e) => {
-            e.stopPropagation();
-            openPhotosModal(job, idx);
+    const groupsWrap = el("div", { class: "job-photos__groups" });
+    const dateGroups = groupPhotosByUploadDate(ordered);
+    let shown = 0;
+    let globalIndex = 0;
+    for (const group of dateGroups) {
+      if (shown >= VISIBLE_PHOTO_COUNT) break;
+      const items = [];
+      for (const photo of group.photos) {
+        if (shown >= VISIBLE_PHOTO_COUNT) break;
+        items.push({ photo, globalIndex });
+        globalIndex += 1;
+        shown += 1;
+      }
+      if (!items.length) continue;
+      const groupEl = el("div", { class: "job-photos__date-group" });
+      groupEl.appendChild(el("div", { class: "job-photos__date-label" }, group.label));
+      const grid = el("div", { class: "job-photos__grid" });
+      for (const { photo, globalIndex: idx } of items) {
+        const img = el("img", {
+          alt: photo.original_filename || `Photo ${idx + 1}`,
+          loading: "lazy",
+          decoding: "async",
+          dataset: {
+            lazyThumb: "photo",
+            jobId: String(job.id),
+            itemId: String(photo.id),
           },
-        },
-        [img]
-      );
-      grid.appendChild(thumb);
-    });
-    bodyChildren.push(grid);
+        });
+        const thumb = el(
+          "button",
+          {
+            type: "button",
+            class: "job-photos__thumb",
+            dataset: { index: String(idx) },
+            title: photo.original_filename || "",
+            "aria-label": `Open ${photo.original_filename || `photo ${idx + 1}`}`,
+            onclick: (e) => {
+              e.stopPropagation();
+              openPhotosModal(job, idx);
+            },
+          },
+          [img]
+        );
+        grid.appendChild(thumb);
+      }
+      groupEl.appendChild(grid);
+      groupsWrap.appendChild(groupEl);
+    }
+    bodyChildren.push(groupsWrap);
   }
 
   return el(
@@ -2203,6 +2456,89 @@ function renderJobPhotos(job) {
     },
     [
       el("div", { class: "job-photos__header" }, headerChildren),
+      ...bodyChildren,
+    ]
+  );
+}
+
+function getJobSketchesOrdered(job) {
+  return [...(job.sketches || [])].sort(
+    (a, b) => new Date(b.updated_at) - new Date(a.updated_at) || b.id - a.id
+  );
+}
+
+function renderJobSketches(job) {
+  const ordered = getJobSketchesOrdered(job);
+  const total = ordered.length;
+  const hiddenCount = Math.max(0, total - VISIBLE_SKETCH_COUNT);
+
+  const headerChildren = [
+    el("h4", { class: "job-sketches__heading" }, "Sketches"),
+    el("span", { class: "job-sketches__count" }, `(${total})`),
+  ];
+  if (hiddenCount > 0) {
+    headerChildren.push(
+      el("span", { class: "job-sketches__more-badge" }, `+${hiddenCount} more`)
+    );
+  }
+
+  const bodyChildren = [];
+  if (!total) {
+    bodyChildren.push(
+      el("p", { class: "job-sketches__empty" }, "No sketches yet — click to add.")
+    );
+  } else {
+    const grid = el("div", { class: "job-sketches__grid" });
+    for (let i = 0; i < Math.min(total, VISIBLE_SKETCH_COUNT); i += 1) {
+      const sketch = ordered[i];
+      const img = el("img", {
+        alt: sketch.title || `Sketch ${i + 1}`,
+        loading: "lazy",
+        decoding: "async",
+        dataset: {
+          lazyThumb: "sketch",
+          jobId: String(job.id),
+          itemId: String(sketch.id),
+        },
+      });
+      const thumb = el(
+        "button",
+        {
+          type: "button",
+          class: "job-sketches__thumb",
+          title: sketch.title || "",
+          "aria-label": `Open ${sketch.title || `sketch ${i + 1}`}`,
+          onclick: (e) => {
+            e.stopPropagation();
+            openSketchesModal(job, sketch.id);
+          },
+        },
+        [img]
+      );
+      grid.appendChild(thumb);
+    }
+    bodyChildren.push(grid);
+  }
+
+  return el(
+    "section",
+    {
+      class: "job-sketches",
+      role: "button",
+      tabindex: "0",
+      "aria-label": total
+        ? `Open ${total} sketch${total === 1 ? "" : "es"}`
+        : "Open sketches to add",
+      onclick: () => openSketchesModal(job, null),
+      onkeydown: (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          openSketchesModal(job, null);
+        }
+      },
+    },
+    [
+      el("div", { class: "job-sketches__header" }, headerChildren),
       ...bodyChildren,
     ]
   );
@@ -2246,12 +2582,166 @@ function renderJobContacts(job) {
 
 // ---- Render: card back (checklist) --------------------------------------
 
+function createTaskDragHandleIcon() {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("width", "14");
+  svg.setAttribute("height", "14");
+  svg.setAttribute("viewBox", "0 0 14 14");
+  svg.setAttribute("fill", "currentColor");
+  svg.setAttribute("aria-hidden", "true");
+  for (const cy of [3, 7, 11]) {
+    for (const cx of [4, 10]) {
+      const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+      circle.setAttribute("cx", String(cx));
+      circle.setAttribute("cy", String(cy));
+      circle.setAttribute("r", "1.35");
+      svg.appendChild(circle);
+    }
+  }
+  return svg;
+}
+
+function getTaskDragAfterElement(tasklistEl, clientY) {
+  const rows = [...tasklistEl.querySelectorAll(":scope > .task:not(.task--dragging)")];
+  return rows.reduce(
+    (closest, child) => {
+      const box = child.getBoundingClientRect();
+      const offset = clientY - box.top - box.height / 2;
+      if (offset < 0 && offset > closest.offset) {
+        return { offset, element: child };
+      }
+      return closest;
+    },
+    { offset: Number.NEGATIVE_INFINITY, element: null }
+  ).element;
+}
+
+function attachTasklistDragDrop(tasklistEl, jobId) {
+  if (!tasklistEl || tasklistEl.dataset.dndAttached === "1") return;
+  tasklistEl.dataset.dndAttached = "1";
+
+  let dragState = null;
+
+  const getRows = () => [...tasklistEl.querySelectorAll(":scope > .task")];
+
+  const clearDropTargets = () => {
+    getRows().forEach((row) => row.classList.remove("task--drop-target"));
+  };
+
+  const cleanupDragUi = () => {
+    if (dragState?.autoScrollId) cancelAnimationFrame(dragState.autoScrollId);
+    tasklistEl.classList.remove("tasklist--dragging");
+    if (dragState?.row) dragState.row.classList.remove("task--dragging");
+    clearDropTargets();
+  };
+
+  const maybeAutoScroll = (clientY) => {
+    const scroller = tasklistEl.closest(".back__body");
+    if (!scroller) return;
+    const { top, bottom } = scroller.getBoundingClientRect();
+    const margin = 36;
+    if (clientY < top + margin) scroller.scrollTop -= 10;
+    else if (clientY > bottom - margin) scroller.scrollTop += 10;
+  };
+
+  const finishDrag = async (commit) => {
+    if (!dragState) return;
+    const { row, startIndex, pointerId } = dragState;
+    const finalIndex = getRows().indexOf(row);
+    cleanupDragUi();
+    dragState = null;
+
+    try {
+      if (row?.querySelector(".task__drag-handle")?.hasPointerCapture?.(pointerId)) {
+        row.querySelector(".task__drag-handle").releasePointerCapture(pointerId);
+      }
+    } catch (_) {
+      /* ignore */
+    }
+
+    if (!commit || finalIndex < 0 || finalIndex === startIndex) {
+      if (!commit) {
+        const job = state.jobsById.get(jobId);
+        if (job) replaceJob(job);
+      }
+      return;
+    }
+
+    const taskKey = row.dataset.taskKey;
+    if (!taskKey) return;
+
+    try {
+      const updated = await apiClient.moveJobTask(jobId, taskKey, { target_index: finalIndex });
+      replaceJob(updated);
+    } catch (err) {
+      toast(`Failed to move task: ${err.message}`, "error");
+      const job = state.jobsById.get(jobId);
+      if (job) replaceJob(job);
+    }
+  };
+
+  tasklistEl.addEventListener("pointerdown", (e) => {
+    const handle = e.target.closest(".task__drag-handle");
+    if (!handle || !tasklistEl.contains(handle)) return;
+    e.preventDefault();
+    e.stopPropagation();
+
+    const row = handle.closest(".task");
+    if (!row) return;
+
+    dragState = {
+      row,
+      startIndex: getRows().indexOf(row),
+      pointerId: e.pointerId,
+      autoScrollId: null,
+    };
+
+    row.classList.add("task--dragging");
+    tasklistEl.classList.add("tasklist--dragging");
+    handle.setPointerCapture(e.pointerId);
+  });
+
+  tasklistEl.addEventListener("pointermove", (e) => {
+    if (!dragState || e.pointerId !== dragState.pointerId) return;
+    e.preventDefault();
+    e.stopPropagation();
+
+    const { row } = dragState;
+    const afterElement = getTaskDragAfterElement(tasklistEl, e.clientY);
+    clearDropTargets();
+    if (afterElement) {
+      afterElement.classList.add("task--drop-target");
+      tasklistEl.insertBefore(row, afterElement);
+    } else {
+      tasklistEl.appendChild(row);
+    }
+
+    if (dragState.autoScrollId) cancelAnimationFrame(dragState.autoScrollId);
+    dragState.autoScrollId = requestAnimationFrame(() => maybeAutoScroll(e.clientY));
+  });
+
+  tasklistEl.addEventListener("pointerup", (e) => {
+    if (!dragState || e.pointerId !== dragState.pointerId) return;
+    e.preventDefault();
+    e.stopPropagation();
+    void finishDrag(true);
+  });
+
+  tasklistEl.addEventListener("pointercancel", (e) => {
+    if (!dragState || e.pointerId !== dragState.pointerId) return;
+    void finishDrag(false);
+  });
+}
+
 function renderBack(job) {
   const list = el("ul", { class: "tasklist" });
 
   for (let i = 0; i < job.tasks.length; i += 1) {
     const task = job.tasks[i];
     list.appendChild(renderTaskRow(job, task, i, job.tasks.length));
+  }
+  if (canCreateJob()) {
+    attachTasklistDragDrop(list, job.id);
   }
 
   const customTaskTools = canCreateJob()
@@ -2456,6 +2946,7 @@ function renderBack(job) {
       renderJobDocs(job),
       renderJobNotesFeed(job),
       renderJobPhotos(job),
+      renderJobSketches(job),
       customTaskTools,
       list,
     ]),
@@ -2665,6 +3156,19 @@ function renderTaskRow(job, task, taskIndex, totalTasks) {
     isIssue ? "! Issue" : "Flag"
   );
   const canManageTaskList = canCreateJob();
+  const dragHandle = canManageTaskList
+    ? el(
+        "button",
+        {
+          type: "button",
+          class: "task__drag-handle",
+          "aria-label": "Drag to reorder",
+          title: "Drag to reorder",
+          tabIndex: -1,
+        },
+        [createTaskDragHandleIcon()]
+      )
+    : null;
   const moveUpBtn = canManageTaskList
     ? el(
         "button",
@@ -2676,7 +3180,7 @@ function renderTaskRow(job, task, taskIndex, totalTasks) {
           onclick: async (e) => {
             e.stopPropagation();
             try {
-              const updated = await apiClient.moveJobTask(job.id, task.task_key, "up");
+              const updated = await apiClient.moveJobTask(job.id, task.task_key, { direction: "up" });
               replaceJob(updated);
             } catch (err) {
               toast(`Failed to move task: ${err.message}`, "error");
@@ -2697,7 +3201,7 @@ function renderTaskRow(job, task, taskIndex, totalTasks) {
           onclick: async (e) => {
             e.stopPropagation();
             try {
-              const updated = await apiClient.moveJobTask(job.id, task.task_key, "down");
+              const updated = await apiClient.moveJobTask(job.id, task.task_key, { direction: "down" });
               replaceJob(updated);
             } catch (err) {
               toast(`Failed to move task: ${err.message}`, "error");
@@ -2737,16 +3241,22 @@ function renderTaskRow(job, task, taskIndex, totalTasks) {
     deleteBtn,
   ]);
 
+  const rowChildren = [
+    checkbox,
+    el("div", { class: "task__main" }, [
+      el("div", { class: "task__label" }, [el("span", {}, task.task_label), taskActions]),
+      el("div", { class: "task__inputs" }, [dateWrap, noteInput]),
+    ]),
+  ];
+  if (dragHandle) rowChildren.unshift(dragHandle);
+
   return el(
     "li",
-    { class: "task", dataset: { status: task.status, taskKey: task.task_key } },
-    [
-      checkbox,
-      el("div", { class: "task__main" }, [
-        el("div", { class: "task__label" }, [el("span", {}, task.task_label), taskActions]),
-        el("div", { class: "task__inputs" }, [dateWrap, noteInput]),
-      ]),
-    ]
+    {
+      class: canManageTaskList ? "task task--draggable" : "task",
+      dataset: { status: task.status, taskKey: task.task_key },
+    },
+    rowChildren
   );
 }
 
@@ -2820,6 +3330,11 @@ function setCardOverlayPageState() {
 
 function syncFlippedCardOverlayClasses() {
   for (const card of getFlippedCards()) {
+    const cardJobId = Number(card.dataset.id);
+    if (state.activeDetailNoOverlay && cardJobId === state.activeDetailJobId) {
+      card.classList.remove("card--mobile-overlay", "card--desktop-overlay");
+      continue;
+    }
     if (isMobileCardOverlayViewport()) {
       card.classList.add("card--mobile-overlay");
       card.classList.remove("card--desktop-overlay");
@@ -3151,22 +3666,23 @@ function replaceJob(updatedJob) {
       renderDocsModalContent(updatedJob);
     }
     if (photosModalState.jobId === updatedJob.id && !$("#photos-modal")?.hidden) {
-      const photoCount = Array.isArray(updatedJob.photos) ? updatedJob.photos.length : 0;
-      if (photoCount <= 0) {
+      const photos = getJobPhotosOrdered(updatedJob);
+      if (!photos.length) {
         photosModalState.selectedIndex = 0;
-        photosModalState.pageIndex = 0;
-      } else {
-        if (photosModalState.selectedIndex > photoCount - 1) {
-          photosModalState.selectedIndex = photoCount - 1;
-        }
-        const totalPages = Math.max(1, Math.ceil(photoCount / PHOTOS_MODAL_PAGE_SIZE));
-        if (photosModalState.pageIndex > totalPages - 1) {
-          photosModalState.pageIndex = totalPages - 1;
-        }
+      } else if (photosModalState.selectedIndex > photos.length - 1) {
+        photosModalState.selectedIndex = photos.length - 1;
       }
       renderPhotosModalContent(updatedJob);
     }
+    if (sketchesModalState.jobId === updatedJob.id && !$("#sketches-modal")?.hidden) {
+      const sketches = getJobSketchesOrdered(updatedJob);
+      if (!sketches.some((s) => s.id === sketchesModalState.selectedSketchId)) {
+        sketchesModalState.selectedSketchId = sketches[0]?.id ?? null;
+      }
+      renderSketchesModalContent(updatedJob);
+    }
     applyFilter();
+    syncJobsPollSignature();
     return;
   }
 
@@ -3179,6 +3695,8 @@ function replaceJob(updatedJob) {
   if (wasFlipped && oldCard) {
     const prevBack = oldCard.querySelector(".back__body");
     if (prevBack) backScrollTop = prevBack.scrollTop;
+    state.activeDetailJobId = updatedJob.id;
+    state.activeDetailNoOverlay = !wasMobileOverlay && !wasDesktopOverlay;
   }
 
   const newCard = renderCard(updatedJob);
@@ -3203,9 +3721,13 @@ function replaceJob(updatedJob) {
         newInner.classList.remove("no-flip-transition");
         nextBack.scrollTop = backScrollTop;
         if (focusSnap) restoreEditableFocusAfterCardSwap(newCard, updatedJob.id, focusSnap);
+        loadCardBackThumbnails(updatedJob.id);
       });
     } else {
-      requestAnimationFrame(() => newInner.classList.remove("no-flip-transition"));
+      requestAnimationFrame(() => {
+        newInner.classList.remove("no-flip-transition");
+        loadCardBackThumbnails(updatedJob.id);
+      });
     }
   } else if (focusSnap) {
     requestAnimationFrame(() => restoreEditableFocusAfterCardSwap(newCard, updatedJob.id, focusSnap));
@@ -3216,24 +3738,25 @@ function replaceJob(updatedJob) {
     renderDocsModalContent(updatedJob);
   }
   if (photosModalState.jobId === updatedJob.id && !$("#photos-modal")?.hidden) {
-    const photoCount = Array.isArray(updatedJob.photos) ? updatedJob.photos.length : 0;
-    if (photoCount <= 0) {
+    const photos = getJobPhotosOrdered(updatedJob);
+    if (!photos.length) {
       photosModalState.selectedIndex = 0;
-      photosModalState.pageIndex = 0;
-    } else {
-      if (photosModalState.selectedIndex > photoCount - 1) {
-        photosModalState.selectedIndex = photoCount - 1;
-      }
-      const totalPages = Math.max(1, Math.ceil(photoCount / PHOTOS_MODAL_PAGE_SIZE));
-      if (photosModalState.pageIndex > totalPages - 1) {
-        photosModalState.pageIndex = totalPages - 1;
-      }
+    } else if (photosModalState.selectedIndex > photos.length - 1) {
+      photosModalState.selectedIndex = photos.length - 1;
     }
     renderPhotosModalContent(updatedJob);
+  }
+  if (sketchesModalState.jobId === updatedJob.id && !$("#sketches-modal")?.hidden) {
+    const sketches = getJobSketchesOrdered(updatedJob);
+    if (!sketches.some((s) => s.id === sketchesModalState.selectedSketchId)) {
+      sketchesModalState.selectedSketchId = sketches[0]?.id ?? null;
+    }
+    renderSketchesModalContent(updatedJob);
   }
 
   applyFilter();
   reorderCardsByCompletion();
+  syncJobsPollSignature();
 }
 
 function removeJob(jobId) {
@@ -3246,12 +3769,14 @@ function removeJob(jobId) {
   if (card) card.remove();
   if (docsModalState.jobId === id) closeDocsModal();
   if (photosModalState.jobId === id) closePhotosModal();
+  if (sketchesModalState.jobId === id) closeSketchesModal();
   if (contactsModalState.jobId === id) closeContactsModal();
   if (notesModalState.jobId === id) closeNotesModal();
   if (state.view === "overview") {
     renderOverviewBars();
   }
   applyFilter();
+  syncJobsPollSignature();
 }
 
 function updateEmptyStateMessage() {
@@ -3266,10 +3791,46 @@ function updateEmptyStateMessage() {
   }
 }
 
+function captureActiveDetailScroll() {
+  const detailId = state.activeDetailJobId;
+  if (detailId == null || state.view !== "cards") {
+    return { detailId: null, backScrollTop: 0, noOverlay: false };
+  }
+  const card = getCardById(detailId);
+  let backScrollTop = 0;
+  if (card) {
+    const prevBack = card.querySelector(".back__body");
+    if (prevBack) backScrollTop = prevBack.scrollTop;
+  }
+  return {
+    detailId,
+    backScrollTop,
+    noOverlay: state.activeDetailNoOverlay,
+  };
+}
+
+function restoreActiveFlippedCardAfterRebuild(detailId, backScrollTop, noOverlay) {
+  if (detailId == null || !state.jobsById.has(detailId)) return;
+  const card = getCardById(detailId);
+  if (!card) return;
+  const inner = card.querySelector(".card-inner");
+  if (inner) inner.classList.add("no-flip-transition");
+  closeOtherFlippedCards(detailId);
+  flipCard(detailId, true);
+  if (noOverlay) keepCardOpenWithoutOverlay(detailId);
+  const nextBack = card.querySelector(".back__body");
+  if (nextBack) nextBack.scrollTop = backScrollTop;
+  requestAnimationFrame(() => {
+    if (inner) inner.classList.remove("no-flip-transition");
+    loadCardBackThumbnails(detailId);
+  });
+}
+
 function renderAll() {
   const grid = $("#grid");
   if (grid) grid.classList.toggle("card-grid--overview", state.view === "overview");
   if (state.view === "overview") clearActiveDetailIntent();
+  const activeDetail = captureActiveDetailScroll();
   $$(".overview", grid).forEach((n) => n.remove());
   $$(".card", grid).forEach((c) => c.remove());
 
@@ -3294,27 +3855,15 @@ function renderAll() {
   }
   refreshJobTypeTabs();
   applyFilter();
+  if (state.view === "cards" && activeDetail.detailId != null && state.jobsById.has(activeDetail.detailId)) {
+    restoreActiveFlippedCardAfterRebuild(
+      activeDetail.detailId,
+      activeDetail.backScrollTop,
+      activeDetail.noOverlay
+    );
+  }
   setCardOverlayPageState();
   syncMobileCardHistoryAfterOverlayClosed();
-
-  const detailId = state.activeDetailJobId;
-  if (state.view === "cards" && detailId != null && state.jobsById.has(detailId)) {
-    requestAnimationFrame(() => {
-      if (state.view !== "cards" || state.activeDetailJobId !== detailId) return;
-      if (!state.jobsById.has(detailId)) return;
-      const card = getCardById(detailId);
-      if (!card) return;
-      const inner = card.querySelector(".card-inner");
-      if (inner) inner.classList.add("no-flip-transition");
-      const noOverlay = state.activeDetailNoOverlay;
-      closeOtherFlippedCards(detailId);
-      flipCard(detailId, true);
-      if (noOverlay) keepCardOpenWithoutOverlay(detailId);
-      requestAnimationFrame(() => {
-        if (inner) inner.classList.remove("no-flip-transition");
-      });
-    });
-  }
 }
 
 function jobMatchesActiveFilters(job, q) {
@@ -3358,8 +3907,10 @@ function renderDocsModalContent(job) {
     return;
   }
 
-  const fieldDocs = docs.filter((doc) => (doc.category || "field") !== "permit");
-  const permitDocs = docs.filter((doc) => (doc.category || "field") === "permit");
+  const fieldDocs = docs.filter((doc) => docCategory(doc) === "field");
+  const permitDocs = docs.filter((doc) => docCategory(doc) === "permit");
+  const salesDocs = docs.filter((doc) => docCategory(doc) === "sales");
+  const invoicesDocs = docs.filter((doc) => docCategory(doc) === "invoices");
 
   function buildModalList(listDocs, emptyLabel) {
     const list = el("ul", { class: "docs-modal__list" });
@@ -3458,6 +4009,26 @@ function renderDocsModalContent(job) {
       ]
     )
   );
+  body.appendChild(
+    el(
+      "details",
+      { class: "docs-modal__accordion" },
+      [
+        el("summary", { class: "docs-modal__accordion-summary" }, `Sales Docs (${salesDocs.length})`),
+        buildModalList(salesDocs, "No sales PDFs found."),
+      ]
+    )
+  );
+  body.appendChild(
+    el(
+      "details",
+      { class: "docs-modal__accordion" },
+      [
+        el("summary", { class: "docs-modal__accordion-summary" }, `Invoices (${invoicesDocs.length})`),
+        buildModalList(invoicesDocs, "No invoice PDFs found."),
+      ]
+    )
+  );
 }
 
 function closeDocsModal() {
@@ -3511,6 +4082,7 @@ function openNotesModal(jobOrId) {
   closeContactsDirectoryModal();
   closeDocsModal();
   closePhotosModal();
+  closeSketchesModal();
   closeContactsModal();
   notesModalState.jobId = job.id;
   renderNotesModalContent(job);
@@ -3623,6 +4195,7 @@ function openDocsModal(jobOrId) {
   closeUsersModal();
   closeContactsDirectoryModal();
   closePhotosModal();
+  closeSketchesModal();
   closeContactsModal();
   closeNotesModal();
   docsModalState.jobId = job.id;
@@ -3631,14 +4204,32 @@ function openDocsModal(jobOrId) {
   if (modal) modal.hidden = false;
 }
 
-function updatePhotoGallerySelectionLabel(selectedIndex, total, pageIndex, totalPages) {
+function updatePhotoGallerySelectionLabel(selectedIndex, total) {
   const label = $("#photos-modal-selection");
   if (!label) return;
   if (!total) {
     label.textContent = "";
     return;
   }
-  label.textContent = `Selected ${selectedIndex + 1}/${total} - Page ${pageIndex + 1}/${totalPages}`;
+  label.textContent = `Selected ${selectedIndex + 1} of ${total}`;
+}
+
+function scrollActivePhotoTileIntoView() {
+  requestAnimationFrame(() => {
+    const tile = $("#photos-modal-main")?.querySelector(".photos-modal__tile.is-active");
+    tile?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  });
+}
+
+function navigatePhotosModalSelection(delta) {
+  const job = getJobById(photosModalState.jobId);
+  const photos = getJobPhotosOrdered(job);
+  if (!photos.length) return;
+  const next = photosModalState.selectedIndex + delta;
+  if (next < 0 || next >= photos.length) return;
+  photosModalState.selectedIndex = next;
+  renderPhotosModalContent(job);
+  scrollActivePhotoTileIntoView();
 }
 
 function touchDistance(t0, t1) {
@@ -3696,15 +4287,15 @@ function isPhotoViewerOpen() {
 function navigatePhotoViewerBySwipe(delta) {
   if (!isPhotoViewerOpen() || photoViewerState.jobId == null || photoViewerState.photoIndex == null) return;
   const job = getJobById(photoViewerState.jobId);
-  const photos = Array.isArray(job?.photos) ? job.photos : [];
+  const photos = getJobPhotosOrdered(job);
   if (!job || photos.length < 2) return;
   const cur = photoViewerState.photoIndex;
   const next = cur + delta;
   if (next < 0 || next >= photos.length) return;
   photoViewerGesture.ignoreNextClickUntil = performance.now() + 450;
   photosModalState.selectedIndex = next;
-  photosModalState.pageIndex = Math.floor(next / PHOTOS_MODAL_PAGE_SIZE);
   renderPhotosModalContent(job);
+  scrollActivePhotoTileIntoView();
   void openPhotoViewer(job, next);
 }
 
@@ -3872,7 +4463,7 @@ function initPhotoViewerGesturesOnce() {
 }
 
 async function openPhotoViewer(job, index) {
-  const photos = Array.isArray(job?.photos) ? job.photos : [];
+  const photos = getJobPhotosOrdered(job);
   const photo = photos[index];
   if (!photo) return;
 
@@ -3895,7 +4486,7 @@ async function openPhotoViewer(job, index) {
   resetPhotoViewerTransform();
 
   try {
-    const blob = await apiClient.fetchJobPhotoBlob(job.id, photo.id);
+    const blob = await apiClient.fetchJobPhotoDisplayBlob(job.id, photo.id);
     if (reqId !== photoViewerState.loadSeq) return;
     const url = URL.createObjectURL(blob);
     photoViewerState.objectUrl = url;
@@ -3917,9 +4508,10 @@ function wirePhotosModalDownloadButton() {
   if (!downloadBtn) return;
   downloadBtn.onclick = async () => {
     const job = getJobById(photosModalState.jobId);
-    if (!job || !Array.isArray(job.photos) || !job.photos.length) return;
-    const idx = Math.max(0, Math.min(job.photos.length - 1, photosModalState.selectedIndex));
-    const p = job.photos[idx];
+    const photos = getJobPhotosOrdered(job);
+    if (!job || !photos.length) return;
+    const idx = Math.max(0, Math.min(photos.length - 1, photosModalState.selectedIndex));
+    const p = photos[idx];
     if (!p) return;
     try {
       const blob = await apiClient.fetchJobPhotoBlob(job.id, p.id);
@@ -3931,75 +4523,74 @@ function wirePhotosModalDownloadButton() {
 }
 
 function renderPhotosModalGrid(job) {
-  const photos = Array.isArray(job?.photos) ? job.photos : [];
+  const photos = getJobPhotosOrdered(job);
   const main = $("#photos-modal-main");
   const downloadBtn = $("#photos-modal-download-btn");
-  const prevBtn = $("#photos-modal-prev-btn");
-  const nextBtn = $("#photos-modal-next-btn");
   const removeBtn = $("#photos-modal-remove-btn");
-  if (!main || !downloadBtn || !prevBtn || !nextBtn) return;
+  if (!main || !downloadBtn) return;
 
   const canAttach = canAttachJobPhotos();
   if (removeBtn) removeBtn.hidden = !canAttach;
 
   if (!photos.length) {
     photosModalState.selectedIndex = 0;
-    photosModalState.pageIndex = 0;
-    updatePhotoGallerySelectionLabel(0, 0, 0, 1);
+    updatePhotoGallerySelectionLabel(0, 0);
     main.innerHTML = "";
     main.appendChild(el("p", { class: "photos-modal__empty" }, "No photos found for this job."));
     downloadBtn.disabled = true;
-    prevBtn.disabled = true;
-    nextBtn.disabled = true;
     if (removeBtn) removeBtn.disabled = true;
     return;
   }
 
-  const totalPages = Math.max(1, Math.ceil(photos.length / PHOTOS_MODAL_PAGE_SIZE));
-  const pageIndex = Math.min(Math.max(photosModalState.pageIndex, 0), totalPages - 1);
-  photosModalState.pageIndex = pageIndex;
   const selectedIndex = Math.min(Math.max(photosModalState.selectedIndex, 0), photos.length - 1);
   photosModalState.selectedIndex = selectedIndex;
-  updatePhotoGallerySelectionLabel(selectedIndex, photos.length, pageIndex, totalPages);
+  updatePhotoGallerySelectionLabel(selectedIndex, photos.length);
 
   downloadBtn.disabled = false;
-  prevBtn.disabled = pageIndex <= 0;
-  nextBtn.disabled = pageIndex >= totalPages - 1;
   if (removeBtn) removeBtn.disabled = false;
 
-  const start = pageIndex * PHOTOS_MODAL_PAGE_SIZE;
-  const end = Math.min(start + PHOTOS_MODAL_PAGE_SIZE, photos.length);
-
   main.innerHTML = "";
-  for (let i = start; i < end; i++) {
-    const photo = photos[i];
-    const name = photo.original_filename || `Photo ${i + 1}`;
-    const img = el("img", { alt: name });
-    getPhotoThumbUrl(job.id, photo)
-      .then((url) => {
-        img.src = url;
-      })
-      .catch(() => {});
-    const tile = el(
-      "button",
-      {
-        type: "button",
-        class: `photos-modal__tile${i === selectedIndex ? " is-active" : ""}`,
-        title: name,
-        "aria-label": `Open ${name}`,
-        "aria-pressed": i === selectedIndex ? "true" : "false",
-        onclick: () => {
-          photosModalState.selectedIndex = i;
-          renderPhotosModalGrid(job);
-          openPhotoViewer(job, i);
+  const groups = groupPhotosByUploadDate(photos);
+  let globalIndex = 0;
+  for (const group of groups) {
+    const groupEl = el("div", { class: "photos-modal__date-group" });
+    groupEl.appendChild(el("div", { class: "photos-modal__date-label" }, group.label));
+    const grid = el("div", { class: "photos-modal__grid" });
+    for (const photo of group.photos) {
+      const i = globalIndex;
+      globalIndex += 1;
+      const name = photo.original_filename || `Photo ${i + 1}`;
+      const img = el("img", { alt: name });
+      getPhotoThumbUrl(job.id, photo)
+        .then((url) => {
+          img.src = url;
+        })
+        .catch(() => {});
+      const tile = el(
+        "button",
+        {
+          type: "button",
+          class: `photos-modal__tile${i === selectedIndex ? " is-active" : ""}`,
+          title: name,
+          "aria-label": `Open ${name}`,
+          "aria-pressed": i === selectedIndex ? "true" : "false",
+          onclick: () => {
+            photosModalState.selectedIndex = i;
+            renderPhotosModalGrid(job);
+            scrollActivePhotoTileIntoView();
+            openPhotoViewer(job, i);
+          },
         },
-      },
-      img
-    );
-    main.appendChild(tile);
+        img
+      );
+      grid.appendChild(tile);
+    }
+    groupEl.appendChild(grid);
+    main.appendChild(groupEl);
   }
 
   wirePhotosModalDownloadButton();
+  scrollActivePhotoTileIntoView();
 }
 
 function renderPhotosModalUpload(job) {
@@ -4037,8 +4628,7 @@ function renderPhotosModalUpload(job) {
       const result = await uploadJobPhotosSequential(photosModalState.jobId, files);
       toastJobPhotosUploadResult(result);
       if (result.lastUpdated) {
-        photosModalState.selectedIndex = Math.max(0, (result.lastUpdated.photos?.length || 1) - 1);
-        photosModalState.pageIndex = Math.floor(photosModalState.selectedIndex / PHOTOS_MODAL_PAGE_SIZE);
+        photosModalState.selectedIndex = 0;
         renderPhotosModalContent(result.lastUpdated);
       }
     } finally {
@@ -4104,30 +4694,21 @@ function renderPhotosModalContent(job) {
   renderPhotosModalGrid(job);
 }
 
-function shiftPhotosModalPage(delta) {
-  const job = getJobById(photosModalState.jobId);
-  if (!job || !Array.isArray(job.photos) || !job.photos.length) return;
-  const totalPages = Math.max(1, Math.ceil(job.photos.length / PHOTOS_MODAL_PAGE_SIZE));
-  const next = Math.max(0, Math.min(totalPages - 1, photosModalState.pageIndex + delta));
-  if (next === photosModalState.pageIndex) return;
-  photosModalState.pageIndex = next;
-  renderPhotosModalContent(job);
-}
-
 async function removeSelectedModalPhoto() {
   if (!canAttachJobPhotos()) return;
   const job = getJobById(photosModalState.jobId);
-  if (!job || !Array.isArray(job.photos) || !job.photos.length) return;
-  const selectedIndex = Math.max(0, Math.min(job.photos.length - 1, photosModalState.selectedIndex));
-  const photo = job.photos[selectedIndex];
+  const photos = getJobPhotosOrdered(job);
+  if (!job || !photos.length) return;
+  const selectedIndex = Math.max(0, Math.min(photos.length - 1, photosModalState.selectedIndex));
+  const photo = photos[selectedIndex];
   if (!photo) return;
   if (!confirm(`Remove "${photo.original_filename || "photo"}"?`)) return;
   try {
     const updated = await apiClient.deleteJobPhoto(job.id, photo.id);
     photoThumbUrlCache.delete(photo.id);
-    const nextCount = Array.isArray(updated.photos) ? updated.photos.length : 0;
-    photosModalState.selectedIndex = nextCount > 0
-      ? Math.max(0, Math.min(selectedIndex, nextCount - 1))
+    const updatedPhotos = getJobPhotosOrdered(updated);
+    photosModalState.selectedIndex = updatedPhotos.length > 0
+      ? Math.max(0, Math.min(selectedIndex, updatedPhotos.length - 1))
       : 0;
     replaceJob(updated);
     toast("Photo removed", "success");
@@ -4142,10 +4723,192 @@ function closePhotosModal() {
   modal.hidden = true;
   photosModalState.jobId = null;
   photosModalState.selectedIndex = 0;
-  photosModalState.pageIndex = 0;
   closePhotoViewer();
   const main = $("#photos-modal-main");
   if (main) main.innerHTML = "";
+}
+
+function closeSketchesModal() {
+  const modal = $("#sketches-modal");
+  if (!modal) return;
+  modal.hidden = true;
+  sketchesModalState.jobId = null;
+  sketchesModalState.selectedSketchId = null;
+  const main = $("#sketches-modal-main");
+  if (main) main.innerHTML = "";
+}
+
+function updateSketchesModalToolbar() {
+  const hasSelection = sketchesModalState.selectedSketchId != null;
+  const openBtn = $("#sketches-modal-open-btn");
+  const renameBtn = $("#sketches-modal-rename-btn");
+  const deleteBtn = $("#sketches-modal-delete-btn");
+  if (openBtn) openBtn.disabled = !hasSelection;
+  if (renameBtn) renameBtn.disabled = !hasSelection;
+  if (deleteBtn) deleteBtn.disabled = !hasSelection;
+}
+
+function renderSketchesModalGrid(job) {
+  const main = $("#sketches-modal-main");
+  if (!main) return;
+  main.innerHTML = "";
+  const ordered = getJobSketchesOrdered(job);
+  if (!ordered.length) {
+    main.appendChild(el("p", { class: "sketches-modal__empty" }, "No sketches yet. Create one to get started."));
+    updateSketchesModalToolbar();
+    return;
+  }
+  const grid = el("div", { class: "sketches-modal__grid" });
+  for (const sketch of ordered) {
+    const img = el("img", { alt: sketch.title || "", loading: "lazy", decoding: "async" });
+    getSketchThumbUrl(job.id, sketch)
+      .then((url) => {
+        img.src = url;
+      })
+      .catch(() => {});
+    const tile = el(
+      "button",
+      {
+        type: "button",
+        class: "sketches-modal__tile",
+        dataset: { sketchId: String(sketch.id) },
+        onclick: () => {
+          sketchesModalState.selectedSketchId = sketch.id;
+          $$(".sketches-modal__tile", main).forEach((t) => {
+            t.classList.toggle("is-active", Number(t.dataset.sketchId) === sketch.id);
+          });
+          updateSketchesModalToolbar();
+        },
+        ondblclick: () => openSketchEditorForJob(job.id, sketch.id),
+      },
+      [
+        img,
+        el("span", { class: "sketches-modal__tile-label" }, sketch.title || "Untitled"),
+      ]
+    );
+    if (sketchesModalState.selectedSketchId === sketch.id) tile.classList.add("is-active");
+    grid.appendChild(tile);
+  }
+  main.appendChild(grid);
+  updateSketchesModalToolbar();
+}
+
+function renderSketchesModalContent(job) {
+  const titleText = $("#sketches-modal-title-text");
+  if (titleText) titleText.textContent = job.customer_name || "";
+  renderSketchesModalGrid(job);
+}
+
+function openSketchesModal(jobOrId, sketchId = null) {
+  const job = typeof jobOrId === "object" ? jobOrId : getJobById(jobOrId);
+  if (!job) return;
+  closeModal();
+  closeEditJobModal();
+  closeUsersModal();
+  closeContactsDirectoryModal();
+  closeDocsModal();
+  closeContactsModal();
+  closeNotesModal();
+  closePhotosModal();
+  sketchesModalState.jobId = job.id;
+  sketchesModalState.selectedSketchId = sketchId;
+  renderSketchesModalContent(job);
+  const modal = $("#sketches-modal");
+  if (modal) modal.hidden = false;
+}
+
+async function createSketchFromModal() {
+  const job = getJobById(sketchesModalState.jobId);
+  if (!job) return;
+  const title = prompt("Sketch name", "Pool layout");
+  if (!title || !String(title).trim()) return;
+  try {
+    const updated = await apiClient.createJobSketch(job.id, {
+      title: String(title).trim(),
+      grid_spacing_inches: 3,
+    });
+    replaceJob(updated);
+    const fresh = getJobById(job.id);
+    const newest = getJobSketchesOrdered(fresh)[0];
+    sketchesModalState.selectedSketchId = newest?.id ?? null;
+    renderSketchesModalContent(fresh);
+    if (newest) await openSketchEditorForJob(job.id, newest.id);
+  } catch (err) {
+    toast(`Failed: ${err.message}`, "error");
+  }
+}
+
+async function openSketchEditorForJob(jobId, sketchId) {
+  const job = getJobById(jobId);
+  const sketch = (job?.sketches || []).find((s) => s.id === sketchId);
+  if (!job || !sketch || !window.SketchEditor) return;
+  let document;
+  try {
+    document = await apiClient.fetchJobSketchDocument(jobId, sketchId);
+  } catch (err) {
+    toast(`Failed to load sketch: ${err.message}`, "error");
+    return;
+  }
+  closeSketchesModal();
+  await window.SketchEditor.open({
+    jobId,
+    sketch,
+    document,
+    jobPhotos: job.photos || [],
+    fetchPhotoBlob: (photoId) => apiClient.fetchJobPhotoDisplayBlob(jobId, photoId),
+    fetchBackgroundBlob: () => apiClient.fetchJobSketchBackgroundBlob(jobId, sketchId),
+    loadPhotoThumb: (photoId) => getPhotoThumbUrl(jobId, { id: photoId }),
+    onSave: async ({ document: doc, preview, background, contentVersion }) =>
+      apiClient.saveJobSketch(jobId, sketchId, {
+        document: doc,
+        preview,
+        background,
+        contentVersion,
+      }),
+    onSaved: (updatedJob) => {
+      invalidateSketchThumbCache(sketchId);
+      replaceJob(updatedJob);
+      toast("Sketch saved", "success");
+    },
+    onError: (err) => toast(err.message || String(err), "error"),
+  });
+}
+
+async function renameSelectedSketch() {
+  const job = getJobById(sketchesModalState.jobId);
+  const sketchId = sketchesModalState.selectedSketchId;
+  if (!job || sketchId == null) return;
+  const sketch = (job.sketches || []).find((s) => s.id === sketchId);
+  if (!sketch) return;
+  const title = prompt("Rename sketch", sketch.title || "");
+  if (!title || !String(title).trim()) return;
+  try {
+    const updated = await apiClient.renameJobSketch(job.id, sketchId, String(title).trim());
+    replaceJob(updated);
+    renderSketchesModalContent(getJobById(job.id));
+    toast("Sketch renamed", "success");
+  } catch (err) {
+    toast(`Failed: ${err.message}`, "error");
+  }
+}
+
+async function deleteSelectedSketch() {
+  const job = getJobById(sketchesModalState.jobId);
+  const sketchId = sketchesModalState.selectedSketchId;
+  if (!job || sketchId == null) return;
+  const sketch = (job.sketches || []).find((s) => s.id === sketchId);
+  if (!sketch) return;
+  if (!confirm(`Delete sketch "${sketch.title}"?`)) return;
+  try {
+    const updated = await apiClient.deleteJobSketch(job.id, sketchId);
+    invalidateSketchThumbCache(sketchId);
+    replaceJob(updated);
+    sketchesModalState.selectedSketchId = null;
+    renderSketchesModalContent(getJobById(job.id));
+    toast("Sketch deleted", "success");
+  } catch (err) {
+    toast(`Failed: ${err.message}`, "error");
+  }
 }
 
 function openPhotosModal(jobOrId, initialIndex = 0) {
@@ -4158,14 +4921,12 @@ function openPhotosModal(jobOrId, initialIndex = 0) {
   closeDocsModal();
   closeContactsModal();
   closeNotesModal();
+  closeSketchesModal();
   photosModalState.jobId = job.id;
-  const photoCount = Array.isArray(job.photos) ? job.photos.length : 0;
+  const photos = getJobPhotosOrdered(job);
   const requested = Number.isFinite(initialIndex) ? Math.floor(initialIndex) : 0;
-  photosModalState.selectedIndex = photoCount > 0
-    ? Math.max(0, Math.min(requested, photoCount - 1))
-    : 0;
-  photosModalState.pageIndex = photoCount > 0
-    ? Math.floor(photosModalState.selectedIndex / PHOTOS_MODAL_PAGE_SIZE)
+  photosModalState.selectedIndex = photos.length > 0
+    ? Math.max(0, Math.min(requested, photos.length - 1))
     : 0;
   renderPhotosModalContent(job);
   const modal = $("#photos-modal");
@@ -4207,6 +4968,7 @@ async function openCloneJobModal(job) {
   closeContactsDirectoryModal();
   closeDocsModal();
   closePhotosModal();
+  closeSketchesModal();
   closeContactsModal();
   closeNotesModal();
   form.reset();
@@ -4246,6 +5008,7 @@ async function openEditJobModal(job) {
   closeContactsDirectoryModal();
   closeDocsModal();
   closePhotosModal();
+  closeSketchesModal();
   closeContactsModal();
   closeNotesModal();
   idInput.value = String(job.id);
@@ -4291,10 +5054,13 @@ function wireModal() {
   const docsModal = $("#docs-modal");
   const contactsModal = $("#contacts-modal");
   const photosModal = $("#photos-modal");
+  const sketchesModal = $("#sketches-modal");
   const notesModal = $("#notes-modal");
   const taskTemplatesModal = $("#task-templates-modal");
   const feedbackModal = $("#feedback-modal");
   const feedbackReviewModal = $("#feedback-review-modal");
+  const userTasksModal = $("#user-tasks-modal");
+  const userTasksAdminModal = $("#user-tasks-admin-modal");
   const notificationsModal = $("#notifications-modal");
   const contactsDirectoryModal = $("#contacts-directory-modal");
   if (feedbackModal) {
@@ -4305,6 +5071,16 @@ function wireModal() {
   if (feedbackReviewModal) {
     feedbackReviewModal.addEventListener("click", (e) => {
       if (e.target.dataset.close === "1") closeFeedbackReviewModal();
+    });
+  }
+  if (userTasksModal) {
+    userTasksModal.addEventListener("click", (e) => {
+      if (e.target.dataset.close === "1") closeUserTasksModal();
+    });
+  }
+  if (userTasksAdminModal) {
+    userTasksAdminModal.addEventListener("click", (e) => {
+      if (e.target.dataset.close === "1") closeUserTasksAdminModal();
     });
   }
   if (notificationsModal) {
@@ -4326,6 +5102,26 @@ function wireModal() {
       const ta = $("#feedback-body");
       if (ta) ta.value = "";
       await refreshFeedbackMineList();
+    } catch (err) {
+      toast(err.message, "error");
+    }
+  });
+  $("#user-tasks-form")?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const title = String($("#user-task-title")?.value ?? "").trim();
+    const noteRaw = String($("#user-task-note")?.value ?? "").trim();
+    if (!title) {
+      toast("Title is required", "error");
+      return;
+    }
+    try {
+      await apiClient.createUserTask({ title, note: noteRaw || null });
+      toast("Task added", "success");
+      const titleEl = $("#user-task-title");
+      const noteEl = $("#user-task-note");
+      if (titleEl) titleEl.value = "";
+      if (noteEl) noteEl.value = "";
+      await refreshUserTasksMineList();
     } catch (err) {
       toast(err.message, "error");
     }
@@ -4449,12 +5245,23 @@ function wireModal() {
       toast(err.message, "error");
     }
   });
+  if (sketchesModal) {
+    sketchesModal.addEventListener("click", (e) => {
+      if (e.target.dataset.close === "1") closeSketchesModal();
+    });
+    $("#sketches-modal-new-btn")?.addEventListener("click", () => createSketchFromModal());
+    $("#sketches-modal-open-btn")?.addEventListener("click", () => {
+      const jobId = sketchesModalState.jobId;
+      const sketchId = sketchesModalState.selectedSketchId;
+      if (jobId != null && sketchId != null) openSketchEditorForJob(jobId, sketchId);
+    });
+    $("#sketches-modal-rename-btn")?.addEventListener("click", () => renameSelectedSketch());
+    $("#sketches-modal-delete-btn")?.addEventListener("click", () => deleteSelectedSketch());
+  }
   if (photosModal) {
     photosModal.addEventListener("click", (e) => {
       if (e.target.dataset.close === "1") closePhotosModal();
     });
-    $("#photos-modal-prev-btn")?.addEventListener("click", () => shiftPhotosModalPage(-1));
-    $("#photos-modal-next-btn")?.addEventListener("click", () => shiftPhotosModalPage(1));
     $("#photos-modal-remove-btn")?.addEventListener("click", () => removeSelectedModalPhoto());
     if (!photosModalDocDropWired) {
       photosModalDocDropWired = true;
@@ -4475,6 +5282,11 @@ function wireModal() {
     initPhotoViewerGesturesOnce();
   }
   document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && window.SketchEditor?.isOpen?.()) {
+      window.SketchEditor.close();
+      e.preventDefault();
+      return;
+    }
     if (e.key === "Escape" && isPhotoViewerOpen()) {
       closePhotoViewer();
       e.preventDefault();
@@ -4489,16 +5301,20 @@ function wireModal() {
       const isInputContext = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
       if (!isInputContext && e.key === "ArrowLeft") {
         e.preventDefault();
-        shiftPhotosModalPage(-1);
+        navigatePhotosModalSelection(-1);
         return;
       }
       if (!isInputContext && e.key === "ArrowRight") {
         e.preventDefault();
-        shiftPhotosModalPage(1);
+        navigatePhotosModalSelection(1);
         return;
       }
     }
     if (e.key !== "Escape") return;
+    if (sketchesModal && !sketchesModal.hidden) {
+      closeSketchesModal();
+      return;
+    }
     if (photosModal && !photosModal.hidden) {
       closePhotosModal();
       return;
@@ -4517,6 +5333,14 @@ function wireModal() {
     }
     if (feedbackReviewModal && !feedbackReviewModal.hidden) {
       closeFeedbackReviewModal();
+      return;
+    }
+    if (userTasksAdminModal && !userTasksAdminModal.hidden) {
+      closeUserTasksAdminModal();
+      return;
+    }
+    if (userTasksModal && !userTasksModal.hidden) {
+      closeUserTasksModal();
       return;
     }
     if (notificationsModal && !notificationsModal.hidden) {
@@ -4602,6 +5426,7 @@ function wireModal() {
           reorderCardsByCompletion();
           applyFilter();
         }
+        syncJobsPollSignature();
         closeModal();
         toast(
           wasClone
@@ -4737,6 +5562,196 @@ function closeFeedbackReviewModal() {
   if (modal) modal.hidden = true;
 }
 
+function openUserTasksModal() {
+  const modal = $("#user-tasks-modal");
+  if (!modal) return;
+  modal.hidden = false;
+  refreshUserTasksMineList();
+}
+
+function closeUserTasksModal() {
+  const modal = $("#user-tasks-modal");
+  if (modal) modal.hidden = true;
+}
+
+function openUserTasksAdminModal(userId, username) {
+  const modal = $("#user-tasks-admin-modal");
+  if (!modal) return;
+  state.adminTasksUserId = userId;
+  state.adminTasksUsername = username;
+  const nameEl = $("#user-tasks-admin-username");
+  if (nameEl) nameEl.textContent = username;
+  modal.hidden = false;
+  refreshUserTasksAdminList();
+}
+
+function closeUserTasksAdminModal() {
+  const modal = $("#user-tasks-admin-modal");
+  if (modal) modal.hidden = true;
+  state.adminTasksUserId = null;
+  state.adminTasksUsername = null;
+}
+
+function renderUserTaskRow(task, onRefresh) {
+  const titleInput = el("input", {
+    type: "text",
+    class: "user-task__title-input",
+    value: task.title,
+    maxlength: "255",
+    "aria-label": "Task title",
+  });
+  const noteTa = el("textarea", {
+    class: "user-task__note",
+    rows: 2,
+    maxlength: "8000",
+    placeholder: "Optional note…",
+    "aria-label": "Task note",
+  });
+  noteTa.value = task.note || "";
+
+  const saveRow = async () => {
+    const title = String(titleInput.value ?? "").trim();
+    if (!title) {
+      toast("Title is required", "error");
+      return;
+    }
+    const note = String(noteTa.value ?? "").trim() || null;
+    try {
+      await apiClient.updateUserTask(task.id, { title, note });
+      await onRefresh();
+    } catch (err) {
+      toast(err.message, "error");
+    }
+  };
+
+  titleInput.addEventListener("change", saveRow);
+  noteTa.addEventListener("change", saveRow);
+
+  const check = el("input", {
+    type: "checkbox",
+    class: "user-task__check",
+    checked: task.completed ? true : null,
+    "aria-label": "Mark complete",
+  });
+  check.addEventListener("change", async () => {
+    try {
+      await apiClient.updateUserTask(task.id, { completed: check.checked });
+      await onRefresh();
+    } catch (err) {
+      toast(err.message, "error");
+      check.checked = task.completed;
+    }
+  });
+
+  const row = el("div", {
+    class: "user-task",
+    dataset: { completed: task.completed ? "1" : "0" },
+  }, [
+    check,
+    el("div", { class: "user-task__body" }, [
+      titleInput,
+      noteTa,
+      el("div", { class: "user-task__actions" }, [
+        el(
+          "button",
+          {
+            type: "button",
+            class: "btn btn--ghost btn--sm",
+            title: "Move up",
+            onclick: async () => {
+              try {
+                await apiClient.moveUserTask(task.id, "up");
+                await onRefresh();
+              } catch (err) {
+                toast(err.message, "error");
+              }
+            },
+          },
+          "↑"
+        ),
+        el(
+          "button",
+          {
+            type: "button",
+            class: "btn btn--ghost btn--sm",
+            title: "Move down",
+            onclick: async () => {
+              try {
+                await apiClient.moveUserTask(task.id, "down");
+                await onRefresh();
+              } catch (err) {
+                toast(err.message, "error");
+              }
+            },
+          },
+          "↓"
+        ),
+        el(
+          "button",
+          {
+            type: "button",
+            class: "btn btn--ghost btn--sm user-task__delete",
+            onclick: async () => {
+              if (!window.confirm("Delete this task?")) return;
+              try {
+                await apiClient.deleteUserTask(task.id);
+                await onRefresh();
+              } catch (err) {
+                toast(err.message, "error");
+              }
+            },
+          },
+          "Delete"
+        ),
+      ]),
+    ]),
+  ]);
+  return row;
+}
+
+async function refreshUserTasksMineList() {
+  const wrap = $("#user-tasks-mine-list");
+  if (!wrap) return;
+  wrap.textContent = "Loading…";
+  try {
+    const items = await apiClient.listMyUserTasks();
+    poller.channels.userTasksMine.lastSig = userTasksSignature(items);
+    wrap.innerHTML = "";
+    if (!items.length) {
+      wrap.appendChild(el("p", { class: "user-tasks-empty" }, "No tasks yet."));
+      return;
+    }
+    for (const task of items) {
+      wrap.appendChild(renderUserTaskRow(task, refreshUserTasksMineList));
+    }
+  } catch (err) {
+    wrap.textContent = "";
+    wrap.appendChild(el("p", { class: "users-error" }, `Failed to load: ${err.message}`));
+  }
+}
+
+async function refreshUserTasksAdminList() {
+  const wrap = $("#user-tasks-admin-list");
+  const userId = state.adminTasksUserId;
+  if (!wrap || !userId) return;
+  wrap.textContent = "Loading…";
+  try {
+    const items = await apiClient.listAllUserTasks(userId);
+    poller.channels.userTasksAll.lastSig = userTasksSignature(items);
+    wrap.innerHTML = "";
+    if (!items.length) {
+      wrap.appendChild(el("p", { class: "user-tasks-empty" }, "No tasks for this user."));
+      return;
+    }
+    for (const task of items) {
+      wrap.appendChild(renderUserTaskRow(task, refreshUserTasksAdminList));
+    }
+  } catch (err) {
+    wrap.textContent = "";
+    wrap.appendChild(el("p", { class: "users-error" }, `Failed to load: ${err.message}`));
+  }
+}
+
 function openNotificationsModal() {
   const modal = $("#notifications-modal");
   if (!modal) return;
@@ -4746,8 +5761,11 @@ function openNotificationsModal() {
   closeContactsDirectoryModal();
   closeFeedbackModal();
   closeFeedbackReviewModal();
+  closeUserTasksModal();
+  closeUserTasksAdminModal();
   closeDocsModal();
   closePhotosModal();
+  closeSketchesModal();
   closeContactsModal();
   closeNotesModal();
   closeTaskTemplatesModal();
@@ -4955,10 +5973,13 @@ function openTaskTemplatesModal() {
   closeEditJobModal();
   closeDocsModal();
   closePhotosModal();
+  closeSketchesModal();
   closeContactsModal();
   closeNotesModal();
   closeFeedbackModal();
   closeFeedbackReviewModal();
+  closeUserTasksModal();
+  closeUserTasksAdminModal();
   closeNotificationsModal();
   closeUsersModal();
   closeContactsDirectoryModal();
@@ -5110,6 +6131,15 @@ async function refreshUsersModal() {
             "td",
             { class: "users-table__actions" },
             [
+              el(
+                "button",
+                {
+                  type: "button",
+                  class: "btn btn--ghost btn--sm",
+                  onclick: () => openUserTasksAdminModal(u.id, u.username),
+                },
+                "Tasks"
+              ),
               el(
                 "button",
                 {
@@ -5293,6 +6323,9 @@ function wireShell() {
     },
     "review-feedback": async () => {
       openFeedbackReviewModal();
+    },
+    "user-tasks": async () => {
+      openUserTasksModal();
     },
     "new-job": async () => {
       openModal();

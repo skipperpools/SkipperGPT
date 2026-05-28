@@ -38,6 +38,7 @@ from ..schemas import (
 from ..services.job_disk_sync import sync_job_attachments_from_disk
 from ..services.job_docs_fs import move_job_docs_on_rename
 from ..services.job_photos_fs import move_job_photos_on_rename
+from ..services.job_sketches_fs import move_job_sketches_on_rename
 from ..schedule_pdf import build_schedule_pdf
 from ..services.jobs_service import to_job_read, to_job_read_list
 
@@ -84,6 +85,38 @@ def export_schedule_pdf(
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+@router.get("/job-type-task-templates", response_model=List[JobTypeTaskTemplateRead])
+def list_task_templates(
+    job_type: str,
+    _user: User = Depends(require_roles("admin", "office")),
+    db: Session = Depends(get_db),
+) -> List[JobTypeTaskTemplateRead]:
+    if job_type not in VALID_JOB_TYPES:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"job_type must be one of {sorted(VALID_JOB_TYPES)}",
+        )
+    return jobs_repo.list_job_type_task_templates(db, job_type=job_type)
+
+
+@router.post(
+    "/job-type-task-templates",
+    response_model=JobTypeTaskTemplateRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_task_template(
+    payload: JobTypeTaskTemplateCreate,
+    _user: User = Depends(require_roles("admin", "office")),
+    db: Session = Depends(get_db),
+) -> JobTypeTaskTemplateRead:
+    row = jobs_repo.add_job_type_task_template(
+        db,
+        job_type=payload.job_type,
+        task_label=payload.task_label,
+    )
+    return row
 
 
 @router.get("/{job_id}", response_model=JobRead)
@@ -185,6 +218,12 @@ def update_job(
                 docs_root=settings.docs_root,
             )
             move_job_photos_on_rename(
+                db,
+                job=job,
+                new_customer_name=fields["customer_name"],
+                docs_root=settings.docs_root,
+            )
+            move_job_sketches_on_rename(
                 db,
                 job=job,
                 new_customer_name=fields["customer_name"],
@@ -352,12 +391,20 @@ def move_task(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Task '{task_key}' not found on job {job_id}",
         )
-    jobs_repo.move_job_task(
-        db,
-        job_id=job_id,
-        task_key=task_key,
-        direction=payload.direction,
-    )
+    if payload.target_index is not None:
+        jobs_repo.reorder_job_task(
+            db,
+            job_id=job_id,
+            task_key=task_key,
+            target_index=payload.target_index,
+        )
+    else:
+        jobs_repo.move_job_task(
+            db,
+            job_id=job_id,
+            task_key=task_key,
+            direction=payload.direction,
+        )
     job = jobs_repo.get_job(db, job_id)
     assert job is not None
     return to_job_read(job)
@@ -423,35 +470,3 @@ def update_task(
     job = jobs_repo.get_job(db, job_id)
     assert job is not None
     return to_job_read(job)
-
-
-@router.get("/job-type-task-templates", response_model=List[JobTypeTaskTemplateRead])
-def list_task_templates(
-    job_type: str,
-    _user: User = Depends(require_roles("admin", "office")),
-    db: Session = Depends(get_db),
-) -> List[JobTypeTaskTemplateRead]:
-    if job_type not in VALID_JOB_TYPES:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"job_type must be one of {sorted(VALID_JOB_TYPES)}",
-        )
-    return jobs_repo.list_job_type_task_templates(db, job_type=job_type)
-
-
-@router.post(
-    "/job-type-task-templates",
-    response_model=JobTypeTaskTemplateRead,
-    status_code=status.HTTP_201_CREATED,
-)
-def create_task_template(
-    payload: JobTypeTaskTemplateCreate,
-    _user: User = Depends(require_roles("admin", "office")),
-    db: Session = Depends(get_db),
-) -> JobTypeTaskTemplateRead:
-    row = jobs_repo.add_job_type_task_template(
-        db,
-        job_type=payload.job_type,
-        task_label=payload.task_label,
-    )
-    return row

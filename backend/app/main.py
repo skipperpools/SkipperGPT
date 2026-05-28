@@ -23,13 +23,25 @@ from sqlalchemy.exc import SQLAlchemyError
 from .config import PROJECT_ROOT, settings
 from .constants import JOB_TYPE_NEW_CONSTRUCTION
 from .database import Base, SessionLocal, engine
-from .routers import auth, contacts, feedback, health, job_documents, job_photos, jobs, notifications, users
+from .routers import (
+    auth,
+    contacts,
+    feedback,
+    health,
+    job_documents,
+    job_photos,
+    job_sketches,
+    jobs,
+    notifications,
+    user_tasks,
+    users,
+)
 
 # Import models so SQLAlchemy registers them on Base before create_all.
 from . import models  # noqa: F401
-from .models import JobDocument, JobPhoto, User  # noqa: F401
+from .models import JobDocument, JobPhoto, JobSketch, User  # noqa: F401
 from .services.contacts_migration import drop_jobs_contacts_legacy_column, migrate_legacy_json_column
-from .services.thumbnails import ensure_pdf_thumbnail, ensure_photo_thumbnail
+from .services.thumbnails import ensure_pdf_thumbnail, ensure_photo_display, ensure_photo_thumbnail
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logger = logging.getLogger("skipper.app")
@@ -117,6 +129,16 @@ def _ensure_photos_folder_name_column() -> None:
         if "photos_folder_name" not in cols:
             conn.execute(text("ALTER TABLE jobs ADD COLUMN photos_folder_name VARCHAR(180)"))
             logger.info("Added column jobs.photos_folder_name")
+
+
+def _ensure_sketches_folder_name_column() -> None:
+    """Add jobs.sketches_folder_name if missing (existing SQLite/Postgres DBs)."""
+    dialect = engine.dialect.name
+    with engine.begin() as conn:
+        cols = _jobs_column_names(conn, dialect)
+        if "sketches_folder_name" not in cols:
+            conn.execute(text("ALTER TABLE jobs ADD COLUMN sketches_folder_name VARCHAR(180)"))
+            logger.info("Added column jobs.sketches_folder_name")
 
 
 def _ensure_job_type_column() -> None:
@@ -223,7 +245,7 @@ async def _set_frontend_cache_headers(request: Request, call_next):
     """Avoid sticky mobile browser caches for frontend shell/assets."""
     response = await call_next(request)
     path = request.url.path
-    if path in {"/", "/index.html", "/app.js", "/styles.css"}:
+    if path in {"/", "/index.html", "/app.js", "/sketch-editor.js", "/styles.css"}:
         # Force revalidation so users see fresh UI without clearing browser data.
         response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
         response.headers["Pragma"] = "no-cache"
@@ -239,6 +261,7 @@ def _on_startup() -> None:
     _ensure_job_type_column()
     _ensure_docs_folder_name_column()
     _ensure_photos_folder_name_column()
+    _ensure_sketches_folder_name_column()
     _migrate_legacy_contacts_and_drop_column()
     _ensure_notification_billed_columns()
     _ensure_job_document_category_column()
@@ -259,6 +282,7 @@ async def _backfill_thumbnails_loop() -> None:
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
             for sp in photos:
                 await loop.run_in_executor(pool, ensure_photo_thumbnail, settings.docs_root, sp)
+                await loop.run_in_executor(pool, ensure_photo_display, settings.docs_root, sp)
             for sp in docs:
                 await loop.run_in_executor(pool, ensure_pdf_thumbnail, settings.docs_root, sp)
         logger.info("Thumbnail backfill complete (%s photos, %s documents)", len(photos), len(docs))
@@ -288,8 +312,10 @@ app.include_router(contacts.router)
 app.include_router(jobs.router)
 app.include_router(job_documents.router, prefix="/api/jobs")
 app.include_router(job_photos.router, prefix="/api/jobs")
+app.include_router(job_sketches.router, prefix="/api/jobs")
 app.include_router(users.router)
 app.include_router(feedback.router)
+app.include_router(user_tasks.router)
 app.include_router(notifications.router)
 
 
