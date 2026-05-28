@@ -5,6 +5,8 @@
 
 const API = "/api";
 const TOKEN_KEY = "access_token";
+let _sessionExpired = false;
+let _sessionReloadTimer = null;
 
 const state = {
   token: null,
@@ -823,13 +825,14 @@ async function getSketchThumbUrl(jobId, sketch) {
   });
 }
 
-function loadLazyThumbIntoImg(img) {
-  if (!img || img.dataset.thumbLoaded === "1" || img.src) return;
+function loadLazyThumbIntoImg(img, { retry = false } = {}) {
+  if (!img || img.src) return;
+  if (img.dataset.thumbLoading === "1") return;
   const kind = img.dataset.lazyThumb;
   const jobId = Number(img.dataset.jobId);
   const itemId = Number(img.dataset.itemId);
   if (!kind || !jobId || !itemId) return;
-  img.dataset.thumbLoaded = "1";
+  img.dataset.thumbLoading = "1";
   const load =
     kind === "photo"
       ? getPhotoThumbUrl(jobId, { id: itemId })
@@ -838,10 +841,15 @@ function loadLazyThumbIntoImg(img) {
         : getDocThumbUrl(jobId, { id: itemId });
   load
     .then((url) => {
+      delete img.dataset.thumbLoading;
+      if (!img.isConnected) return;
       img.src = url;
+      img.dataset.thumbLoaded = "1";
     })
     .catch(() => {
-      img.dataset.thumbLoaded = "";
+      delete img.dataset.thumbLoaded;
+      delete img.dataset.thumbLoading;
+      if (!retry && img.isConnected) loadLazyThumbIntoImg(img, { retry: true });
     });
 }
 
@@ -1542,7 +1550,52 @@ function authHeaders() {
   return t ? { Authorization: `Bearer ${t}` } : {};
 }
 
+function cancelSessionReload() {
+  if (_sessionReloadTimer != null) {
+    clearTimeout(_sessionReloadTimer);
+    _sessionReloadTimer = null;
+  }
+}
+
+function resetSessionAuthState() {
+  cancelSessionReload();
+  _sessionExpired = false;
+}
+
+async function verifySessionStillValid() {
+  const token = localStorage.getItem(TOKEN_KEY);
+  if (!token) return false;
+  try {
+    const res = await fetch(`${API}/auth/me`, {
+      headers: { Authorization: `Bearer ${token}` },
+      cache: "no-store",
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function handleUnauthorized({ sessionExpiredUI }) {
+  if (!sessionExpiredUI) return;
+  // Ignore stale cached 401s (common on thumbnail GETs after re-login).
+  if (await verifySessionStillValid()) return;
+  localStorage.removeItem(TOKEN_KEY);
+  state.token = null;
+  if (!_sessionExpired) {
+    _sessionExpired = true;
+    toast("Session expired — please sign in again.", "error");
+    cancelSessionReload();
+    // reload() tears down the page; stopAppPolling() is only needed on deliberate logout()
+    _sessionReloadTimer = setTimeout(() => {
+      _sessionReloadTimer = null;
+      location.reload();
+    }, 800);
+  }
+}
+
 function logout() {
+  resetSessionAuthState();
   stopAppPolling();
   localStorage.removeItem(TOKEN_KEY);
   state.token = null;
@@ -1553,20 +1606,19 @@ function logout() {
 // ---- API client ----------------------------------------------------------
 
 async function api(path, opts = {}) {
+  const { sessionExpiredUI = true, ...fetchOpts } = opts;
   const init = {
     headers: {
       ...authHeaders(),
       "Content-Type": "application/json",
-      ...(opts.headers || {}),
+      ...(fetchOpts.headers || {}),
     },
-    ...opts,
+    ...fetchOpts,
   };
   if (init.body && typeof init.body !== "string") init.body = JSON.stringify(init.body);
-  const res = await fetch(`${API}${path}`, init);
+  const res = await fetch(`${API}${path}`, { ...init, cache: "no-store" });
   if (res.status === 401) {
-    localStorage.removeItem(TOKEN_KEY);
-    toast("Session expired — please sign in again.", "error");
-    setTimeout(() => location.reload(), 800);
+    await handleUnauthorized({ sessionExpiredUI });
     throw new Error("Unauthorized");
   }
   if (!res.ok) {
@@ -1595,16 +1647,18 @@ async function parseFetchError(res) {
 }
 
 async function authFetch(path, init = {}) {
-  const headers = { ...authHeaders(), ...(init.headers || {}) };
-  const res = await fetch(`${API}${path}`, { ...init, headers });
+  const { sessionExpiredUI = true, ...fetchInit } = init;
+  const headers = { ...authHeaders(), ...(fetchInit.headers || {}) };
+  const res = await fetch(`${API}${path}`, { ...fetchInit, headers, cache: "no-store" });
   if (res.status === 401) {
-    localStorage.removeItem(TOKEN_KEY);
-    toast("Session expired — please sign in again.", "error");
-    setTimeout(() => location.reload(), 800);
+    await handleUnauthorized({ sessionExpiredUI });
     throw new Error("Unauthorized");
   }
   return res;
 }
+
+/** Thumbnail/file GETs must not end the session (flip loads many in parallel). */
+const AUTH_FETCH_MEDIA = { sessionExpiredUI: false };
 
 async function loginRequest(username, password) {
   const body = new URLSearchParams();
@@ -1614,6 +1668,7 @@ async function loginRequest(username, password) {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body,
+    cache: "no-store",
   });
   if (!res.ok) {
     let detail = "Login failed";
@@ -1713,7 +1768,7 @@ const apiClient = {
   updateJobDocumentTitle: (jobId, documentId, title) =>
     api(`/jobs/${jobId}/documents/${documentId}`, { method: "PATCH", body: { title } }),
   fetchJobDocumentBlob: async (jobId, documentId) => {
-    const res = await authFetch(`/jobs/${jobId}/documents/${documentId}/file`);
+    const res = await authFetch(`/jobs/${jobId}/documents/${documentId}/file`, AUTH_FETCH_MEDIA);
     if (!res.ok) throw new Error(await parseFetchError(res));
     return res.blob();
   },
@@ -1730,22 +1785,22 @@ const apiClient = {
     return res.json();
   },
   fetchJobPhotoBlob: async (jobId, photoId) => {
-    const res = await authFetch(`/jobs/${jobId}/photos/${photoId}/file`);
+    const res = await authFetch(`/jobs/${jobId}/photos/${photoId}/file`, AUTH_FETCH_MEDIA);
     if (!res.ok) throw new Error(await parseFetchError(res));
     return res.blob();
   },
   fetchJobPhotoDisplayBlob: async (jobId, photoId) => {
-    const res = await authFetch(`/jobs/${jobId}/photos/${photoId}/display`);
+    const res = await authFetch(`/jobs/${jobId}/photos/${photoId}/display`, AUTH_FETCH_MEDIA);
     if (!res.ok) throw new Error(await parseFetchError(res));
     return res.blob();
   },
   fetchJobPhotoThumbBlob: async (jobId, photoId) => {
-    const res = await authFetch(`/jobs/${jobId}/photos/${photoId}/thumbnail`);
+    const res = await authFetch(`/jobs/${jobId}/photos/${photoId}/thumbnail`, AUTH_FETCH_MEDIA);
     if (!res.ok) throw new Error(await parseFetchError(res));
     return res.blob();
   },
   fetchJobDocumentThumbBlob: async (jobId, documentId) => {
-    const res = await authFetch(`/jobs/${jobId}/documents/${documentId}/thumbnail`);
+    const res = await authFetch(`/jobs/${jobId}/documents/${documentId}/thumbnail`, AUTH_FETCH_MEDIA);
     if (!res.ok) throw new Error(await parseFetchError(res));
     return res.blob();
   },
@@ -1770,12 +1825,12 @@ const apiClient = {
     return res.json();
   },
   fetchJobSketchThumbBlob: async (jobId, sketchId) => {
-    const res = await authFetch(`/jobs/${jobId}/sketches/${sketchId}/thumbnail`);
+    const res = await authFetch(`/jobs/${jobId}/sketches/${sketchId}/thumbnail`, AUTH_FETCH_MEDIA);
     if (!res.ok) throw new Error(await parseFetchError(res));
     return res.blob();
   },
   fetchJobSketchBackgroundBlob: async (jobId, sketchId) => {
-    const res = await authFetch(`/jobs/${jobId}/sketches/${sketchId}/background`);
+    const res = await authFetch(`/jobs/${jobId}/sketches/${sketchId}/background`, AUTH_FETCH_MEDIA);
     if (!res.ok) throw new Error(await parseFetchError(res));
     return res.blob();
   },
@@ -1783,7 +1838,7 @@ const apiClient = {
     const params = new URLSearchParams();
     if (includeArchived) params.set("include_archived", "true");
     const qs = params.toString();
-    const res = await authFetch(`/jobs/schedule.pdf${qs ? `?${qs}` : ""}`);
+    const res = await authFetch(`/jobs/schedule.pdf${qs ? `?${qs}` : ""}`, AUTH_FETCH_MEDIA);
     if (!res.ok) throw new Error(await parseFetchError(res));
     return res.blob();
   },
@@ -6375,7 +6430,9 @@ async function tryResumeSession() {
   if (!token) return false;
   state.token = token;
   try {
-    state.user = await apiClient.me();
+    // Stale token on load: clear quietly (no toast/reload) so login is not raced by a pending reload.
+    state.user = await api("/auth/me", { sessionExpiredUI: false });
+    resetSessionAuthState();
     return true;
   } catch {
     localStorage.removeItem(TOKEN_KEY);
@@ -6399,6 +6456,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       }
       try {
         const data = await loginRequest(username, password);
+        resetSessionAuthState();
         localStorage.setItem(TOKEN_KEY, data.access_token);
         state.token = data.access_token;
         state.user = await apiClient.me();

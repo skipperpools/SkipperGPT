@@ -1,0 +1,22 @@
+name: Deploy
+
+on:
+  push:
+    branches: [master]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: SSH deploy
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DROPLET_IP }}
+          username: skipper
+          key: ${{ secrets.DROPLET_SSH_KEY }}
+          script: |
+            cd /home/skipper/app
+            git pull origin master
+            cd backend
+            .venv/bin/pip install -r requirements.txt --quiet
+            sudo systemctl restart skipper

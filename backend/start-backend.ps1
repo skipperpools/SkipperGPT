@@ -36,6 +36,8 @@ if (-not $SkipInstall) {
 
 Set-Location $backendRoot
 
+$env:DATABASE_URL = "sqlite:///" + (Join-Path (Split-Path $backendRoot -Parent) "data\skipper.db").Replace("\", "/")
+
 $uvicornArgs = @("-m", "uvicorn", "app.main:app", "--host", $BindHost, "--port", "$Port")
 if (-not $NoReload) {
     $uvicornArgs += "--reload"

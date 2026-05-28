@@ -1,0 +1,1 @@
+skipper ALL=(ALL) NOPASSWD: /bin/systemctl restart skipper

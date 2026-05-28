@@ -1,5 +1,5 @@
 """One-shot copy of all rows from a local SQLite database into a fresh Postgres
-database (typically Render Postgres) while preserving primary keys.
+database (Supabase / Render Postgres) while preserving primary keys.
 
 Run from the `backend/` directory **on your local machine**, with
 ``DATABASE_URL`` pointed at the *target* Postgres instance (Render's external
@@ -53,10 +53,14 @@ TABLE_ORDER: List[str] = [
     "contacts",
     "jobs",
     "job_contacts",
+    "job_type_task_templates",
     "job_tasks",
+    "job_notes",
     "job_documents",
     "job_photos",
+    "job_sketches",
     "feedback_items",
+    "user_tasks",
     "notification_items",
 ]
 

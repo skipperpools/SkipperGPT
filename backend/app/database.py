@@ -57,26 +57,11 @@ def _strip_pgbouncer_param(database_url: str) -> str:
     return cleaned.replace("?&", "?").rstrip("?")
 
 
-def _local_only_database_url() -> str:
-    """Use SQLite only for runtime until cloud DB migration is revisited.
-
-    If DATABASE_URL is set to a non-SQLite URL, ignore it intentionally and
-    fall back to the project-local SQLite file.
-    """
-    candidate = settings.database_url.strip()
-    if candidate.startswith("sqlite:///"):
-        return _resolve_sqlite_path(candidate)
-    return _resolve_sqlite_path("sqlite:///./data/skipper.db")
-
-
-# Cloud DB integration (Postgres/Supabase) is intentionally paused for now.
-# Keep helper functions above for later revisit, but force runtime to local SQLite.
-#
-# Previous runtime URL pipeline:
-# _resolved_url = _strip_pgbouncer_param(
-#     _prefer_ipv4_hostaddr(_normalize_postgres_scheme(_resolve_sqlite_path(settings.database_url)))
-# )
-_resolved_url = _local_only_database_url()
+_resolved_url = _strip_pgbouncer_param(
+    _normalize_postgres_scheme(
+        _resolve_sqlite_path(settings.database_url)
+    )
+)
 _is_sqlite = _resolved_url.startswith("sqlite")
 _connect_args = {"check_same_thread": False} if _is_sqlite else {"prepare_threshold": None}
 

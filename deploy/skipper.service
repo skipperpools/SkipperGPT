@@ -1,0 +1,14 @@
+[Unit]
+Description=Skipper Pools Job Card Dashboard
+After=network.target
+
+[Service]
+User=skipper
+WorkingDirectory=/home/skipper/app/backend
+EnvironmentFile=/home/skipper/app/.env
+ExecStart=/home/skipper/app/backend/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
