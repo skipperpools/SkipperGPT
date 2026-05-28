@@ -44,3 +44,6 @@ desktop.ini
 
 client_secret*.json
 API Keys/
+
+# BackItUp standalone tool
+BackItUp/
