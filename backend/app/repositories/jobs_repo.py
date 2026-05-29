@@ -155,6 +155,66 @@ def get_job(db: Session, job_id: int) -> Optional[Job]:
     return db.execute(stmt).scalar_one_or_none()
 
 
+def job_exists(db: Session, job_id: int) -> bool:
+    return (
+        db.execute(select(Job.id).where(Job.id == job_id)).scalar_one_or_none()
+        is not None
+    )
+
+
+def reload_job_tasks(db: Session, job: Job) -> None:
+    db.expire(job, ["tasks"])
+    db.execute(
+        select(Job).options(selectinload(Job.tasks)).where(Job.id == job.id)
+    )
+    _ = job.tasks
+
+
+def reload_job_contact_links(db: Session, job: Job) -> None:
+    db.expire(job, ["contact_links"])
+    db.execute(
+        select(Job)
+        .options(selectinload(Job.contact_links).selectinload(JobContactLink.contact))
+        .where(Job.id == job.id)
+    )
+    _ = job.contact_links
+
+
+def reload_job_notes(db: Session, job: Job) -> None:
+    db.expire(job, ["job_notes"])
+    db.execute(
+        select(Job)
+        .options(selectinload(Job.job_notes).selectinload(JobNote.author))
+        .where(Job.id == job.id)
+    )
+    _ = job.job_notes
+
+
+def reload_job_documents(db: Session, job: Job) -> None:
+    db.expire(job, ["documents"])
+    db.execute(
+        select(Job)
+        .options(selectinload(Job.documents).selectinload(JobDocument.uploaded_by))
+        .where(Job.id == job.id)
+    )
+    _ = job.documents
+
+
+def reload_job_photos(db: Session, job: Job) -> None:
+    db.expire(job, ["photos"])
+    db.execute(
+        select(Job)
+        .options(selectinload(Job.photos).selectinload(JobPhoto.uploaded_by))
+        .where(Job.id == job.id)
+    )
+    _ = job.photos
+
+
+def reload_job_attachments(db: Session, job: Job) -> None:
+    reload_job_documents(db, job)
+    reload_job_photos(db, job)
+
+
 def replace_job_contact_links(db: Session, job_id: int, contact_ids: List[int]) -> None:
     """Replace all job–contact links with ordered ids (deduped, max MAX_JOB_CONTACTS)."""
     seen: set[int] = set()

@@ -129,6 +129,9 @@ class Job(Base):
     photos_folder_name: Mapped[Optional[str]] = mapped_column(String(180), nullable=True)
     # Resolved folder name under {docs_root}/Sketches/{sketches_folder_name}/ (see job_sketches_paths).
     sketches_folder_name: Mapped[Optional[str]] = mapped_column(String(180), nullable=True)
+    attachments_synced_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     tasks: Mapped[List["JobTask"]] = relationship(
         back_populates="job",

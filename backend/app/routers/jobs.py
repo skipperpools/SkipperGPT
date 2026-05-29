@@ -35,7 +35,7 @@ from ..schemas import (
     JobTypeTaskTemplateRead,
     JobUpdate,
 )
-from ..services.job_disk_sync import sync_job_attachments_from_disk
+from ..services.job_disk_sync import sync_job_attachments_if_stale
 from ..services.job_docs_fs import move_job_docs_on_rename
 from ..services.job_photos_fs import move_job_photos_on_rename
 from ..services.job_sketches_fs import move_job_sketches_on_rename
@@ -128,9 +128,8 @@ def get_job(
     job = jobs_repo.get_job(db, job_id)
     if job is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
-    sync_job_attachments_from_disk(db, job, settings.docs_root)
-    job = jobs_repo.get_job(db, job_id)
-    assert job is not None
+    if sync_job_attachments_if_stale(db, job, settings.docs_root):
+        jobs_repo.reload_job_attachments(db, job)
     return to_job_read(job)
 
 
@@ -164,7 +163,7 @@ def create_job(
         for src_task in source_job.tasks:
             if src_task.task_key not in seeded_keys:
                 jobs_repo.add_job_task(db, job=job, task_label=src_task.task_label)
-    sync_job_attachments_from_disk(db, job, settings.docs_root)
+    sync_job_attachments_if_stale(db, job, settings.docs_root, force=True)
     job = jobs_repo.get_job(db, job.id)
     assert job is not None
     return to_job_read(job)
@@ -243,8 +242,7 @@ def update_job(
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
             ) from exc
-    job = jobs_repo.get_job(db, job_id)
-    assert job is not None
+        jobs_repo.reload_job_contact_links(db, job)
     return to_job_read(job)
 
 
@@ -266,8 +264,7 @@ def list_job_notes(
     _user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> List[JobNoteRead]:
-    job = jobs_repo.get_job(db, job_id)
-    if job is None:
+    if not jobs_repo.job_exists(db, job_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
     notes = jobs_repo.list_job_notes(db, job_id=job_id)
     return [_to_job_note_read(note) for note in notes]
@@ -280,8 +277,7 @@ def create_job_note(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> JobNoteRead:
-    job = jobs_repo.get_job(db, job_id)
-    if job is None:
+    if not jobs_repo.job_exists(db, job_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
     note = jobs_repo.create_job_note(
         db,
@@ -301,8 +297,7 @@ def delete_job_note(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> None:
-    job = jobs_repo.get_job(db, job_id)
-    if job is None:
+    if not jobs_repo.job_exists(db, job_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
     note = jobs_repo.get_job_note(db, job_id=job_id, note_id=note_id)
     if note is None:
@@ -326,9 +321,8 @@ def create_custom_task(
     if job is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
     jobs_repo.add_job_task(db, job=job, task_label=payload.task_label)
-    refreshed = jobs_repo.get_job(db, job_id)
-    assert refreshed is not None
-    return to_job_read(refreshed)
+    jobs_repo.reload_job_tasks(db, job)
+    return to_job_read(job)
 
 
 @router.post("/{job_id}/convert-sales", response_model=JobRead)
@@ -385,7 +379,10 @@ def move_task(
     _user: User = Depends(require_roles("admin", "office")),
     db: Session = Depends(get_db),
 ) -> JobRead:
-    task = jobs_repo.get_task(db, job_id=job_id, task_key=task_key)
+    job = jobs_repo.get_job(db, job_id)
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    task = next((t for t in job.tasks if t.task_key == task_key), None)
     if task is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -405,8 +402,7 @@ def move_task(
             task_key=task_key,
             direction=payload.direction,
         )
-    job = jobs_repo.get_job(db, job_id)
-    assert job is not None
+    jobs_repo.reload_job_tasks(db, job)
     return to_job_read(job)
 
 
@@ -417,15 +413,17 @@ def delete_task(
     _user: User = Depends(require_roles("admin", "office")),
     db: Session = Depends(get_db),
 ) -> JobRead:
-    task = jobs_repo.get_task(db, job_id=job_id, task_key=task_key)
+    job = jobs_repo.get_job(db, job_id)
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    task = next((t for t in job.tasks if t.task_key == task_key), None)
     if task is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Task '{task_key}' not found on job {job_id}",
         )
     jobs_repo.delete_job_task(db, task=task)
-    job = jobs_repo.get_job(db, job_id)
-    assert job is not None
+    jobs_repo.reload_job_tasks(db, job)
     return to_job_read(job)
 
 
@@ -437,7 +435,10 @@ def update_task(
     _user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> JobRead:
-    task = jobs_repo.get_task(db, job_id=job_id, task_key=task_key)
+    job = jobs_repo.get_job(db, job_id)
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    task = next((t for t in job.tasks if t.task_key == task_key), None)
     if task is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -453,20 +454,16 @@ def update_task(
             and new_status == STATUS_COMPLETED
             and task.task_key in BILLING_NOTIFICATION_TASK_KEYS
         ):
-            job_for_message = jobs_repo.get_job(db, job_id)
-            if job_for_message is not None:
-                notifications_repo.create_notification(
-                    db,
-                    type=NOTIFICATION_TYPE_BILLING,
-                    title="Billing milestone completed",
-                    message=(
-                        f"{job_for_message.customer_name}: "
-                        f"{task.task_label} was marked complete."
-                    ),
-                    job_id=job_id,
-                    task_key=task.task_key,
-                )
+            notifications_repo.create_notification(
+                db,
+                type=NOTIFICATION_TYPE_BILLING,
+                title="Billing milestone completed",
+                message=(
+                    f"{job.customer_name}: "
+                    f"{task.task_label} was marked complete."
+                ),
+                job_id=job_id,
+                task_key=task.task_key,
+            )
 
-    job = jobs_repo.get_job(db, job_id)
-    assert job is not None
     return to_job_read(job)

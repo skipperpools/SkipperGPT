@@ -141,6 +141,16 @@ def _ensure_sketches_folder_name_column() -> None:
             logger.info("Added column jobs.sketches_folder_name")
 
 
+def _ensure_attachments_synced_at_column() -> None:
+    """Add jobs.attachments_synced_at if missing (existing SQLite/Postgres DBs)."""
+    dialect = engine.dialect.name
+    with engine.begin() as conn:
+        cols = _jobs_column_names(conn, dialect)
+        if "attachments_synced_at" not in cols:
+            conn.execute(text("ALTER TABLE jobs ADD COLUMN attachments_synced_at TIMESTAMP"))
+            logger.info("Added column jobs.attachments_synced_at")
+
+
 def _ensure_job_type_column() -> None:
     """Add jobs.job_type if missing and backfill existing rows."""
     dialect = engine.dialect.name
@@ -262,6 +272,7 @@ def _on_startup() -> None:
     _ensure_docs_folder_name_column()
     _ensure_photos_folder_name_column()
     _ensure_sketches_folder_name_column()
+    _ensure_attachments_synced_at_column()
     _migrate_legacy_contacts_and_drop_column()
     _ensure_notification_billed_columns()
     _ensure_job_document_category_column()

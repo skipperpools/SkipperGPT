@@ -1,6 +1,7 @@
 """Import job PDFs and images from disk into the database (manual drops under Docs/Photos)."""
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 
 from sqlalchemy.orm import Session
@@ -15,6 +16,7 @@ from .job_photos_paths import absolute_job_photos_dir, stored_path_for_file as p
 from .thumbnails import delete_display_for, delete_thumbnail_for
 
 _MAX_MAGIC_READ = 16_384
+SYNC_MIN_INTERVAL_SECONDS = 60
 
 _EXT_TO_CT = {
     ".jpg": "image/jpeg",
@@ -146,3 +148,35 @@ def sync_job_attachments_from_disk(db: Session, job: Job, docs_root: Path) -> No
         delete_thumbnail_for(docs_root, photo.stored_path, "photo")
         delete_display_for(docs_root, photo.stored_path)
         jobs_repo.delete_job_photo(db, photo=photo)
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _as_utc(dt: datetime) -> datetime:
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def sync_job_attachments_if_stale(
+    db: Session,
+    job: Job,
+    docs_root: Path,
+    *,
+    force: bool = False,
+) -> bool:
+    """Run disk sync when last sync is older than SYNC_MIN_INTERVAL_SECONDS."""
+    now = _utcnow()
+    if (
+        not force
+        and job.attachments_synced_at is not None
+        and (now - _as_utc(job.attachments_synced_at)).total_seconds()
+        < SYNC_MIN_INTERVAL_SECONDS
+    ):
+        return False
+    sync_job_attachments_from_disk(db, job, docs_root)
+    job.attachments_synced_at = now
+    db.commit()
+    return True

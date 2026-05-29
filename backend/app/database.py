@@ -72,6 +72,14 @@ _engine_kwargs: dict = {
 }
 if _is_sqlite:
     _engine_kwargs["poolclass"] = StaticPool
+else:
+    _engine_kwargs.update(
+        {
+            "pool_pre_ping": True,
+            "pool_size": 5,
+            "max_overflow": 10,
+        }
+    )
 
 engine = create_engine(_resolved_url, **_engine_kwargs)
 

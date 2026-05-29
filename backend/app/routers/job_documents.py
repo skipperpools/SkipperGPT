@@ -15,7 +15,7 @@ from ..deps.auth import get_current_user, require_roles
 from ..models import User
 from ..repositories import jobs_repo
 from ..schemas import JobDocumentRead, JobDocumentUpdate, JobRead
-from ..services.job_disk_sync import sync_job_attachments_from_disk
+from ..services.job_disk_sync import sync_job_attachments_if_stale
 from ..services.job_docs_fs import (
     absolute_file_path,
     delete_document_file,
@@ -41,9 +41,8 @@ def list_job_documents(
     job = jobs_repo.get_job(db, job_id)
     if job is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
-    sync_job_attachments_from_disk(db, job, settings.docs_root)
-    job = jobs_repo.get_job(db, job_id)
-    assert job is not None
+    if sync_job_attachments_if_stale(db, job, settings.docs_root):
+        jobs_repo.reload_job_attachments(db, job)
     return to_job_read(job).documents
 
 
@@ -132,8 +131,7 @@ async def upload_job_document(
             detail=str(exc),
         ) from exc
 
-    job = jobs_repo.get_job(db, job_id)
-    assert job is not None
+    jobs_repo.reload_job_documents(db, job)
     return to_job_read(job)
 
 
@@ -223,11 +221,8 @@ def delete_job_document_route(
         ) from exc
 
     jobs_repo.delete_job_document(db, doc=doc)
-    job = jobs_repo.get_job(db, job_id)
-    assert job is not None
+    jobs_repo.reload_job_documents(db, job)
     remove_empty_job_doc_dir(settings.docs_root, job)
-    job = jobs_repo.get_job(db, job_id)
-    assert job is not None
     return to_job_read(job)
 
 
@@ -253,7 +248,5 @@ def update_job_document_route(
             detail="Title cannot be empty",
         )
     jobs_repo.update_job_document_title(db, doc=doc, title=new_title[:255])
-
-    job = jobs_repo.get_job(db, job_id)
-    assert job is not None
+    db.refresh(doc)
     return to_job_read(job)

@@ -24,7 +24,7 @@ from ..deps.auth import get_current_user
 from ..models import User
 from ..repositories import jobs_repo
 from ..schemas import JobPhotoRead, JobRead
-from ..services.job_disk_sync import sync_job_attachments_from_disk
+from ..services.job_disk_sync import sync_job_attachments_if_stale
 from ..services.job_photos_fs import (
     absolute_file_path,
     delete_photo_file,
@@ -112,9 +112,8 @@ def list_job_photos(
     job = jobs_repo.get_job(db, job_id)
     if job is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
-    sync_job_attachments_from_disk(db, job, settings.docs_root)
-    job = jobs_repo.get_job(db, job_id)
-    assert job is not None
+    if sync_job_attachments_if_stale(db, job, settings.docs_root):
+        jobs_repo.reload_job_attachments(db, job)
     return to_job_read(job).photos
 
 
@@ -191,8 +190,7 @@ async def upload_job_photo(
             detail=str(exc),
         ) from exc
 
-    job = jobs_repo.get_job(db, job_id)
-    assert job is not None
+    jobs_repo.reload_job_photos(db, job)
     return to_job_read(job)
 
 
@@ -307,9 +305,6 @@ def delete_job_photo_route(
         ) from exc
 
     jobs_repo.delete_job_photo(db, photo=photo)
-    job = jobs_repo.get_job(db, job_id)
-    assert job is not None
+    jobs_repo.reload_job_photos(db, job)
     remove_empty_job_photo_dir(settings.docs_root, job)
-    job = jobs_repo.get_job(db, job_id)
-    assert job is not None
     return to_job_read(job)
