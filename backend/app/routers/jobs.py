@@ -63,6 +63,11 @@ def list_jobs(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> List[JobRead]:
+    if include_archived and user.role == "field":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only admin and office users can view archived jobs",
+        )
     jobs = jobs_repo.list_jobs(db, include_archived=include_archived)
     if user.role == "field":
         jobs = [job for job in jobs if job.job_type != JOB_TYPE_SALES]
@@ -75,6 +80,11 @@ def export_schedule_pdf(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> Response:
+    if include_archived and user.role == "field":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only admin and office users can view archived jobs",
+        )
     jobs = jobs_repo.list_jobs(db, include_archived=include_archived)
     if user.role == "field":
         jobs = [job for job in jobs if job.job_type != JOB_TYPE_SALES]

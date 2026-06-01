@@ -110,8 +110,8 @@ const photoViewerGesture = {
 // Card-back thumbnail grid: 4 columns x 2 rows.
 const VISIBLE_PHOTO_COUNT = 8;
 const VISIBLE_SKETCH_COUNT = 4;
-/** Max feed notes shown on the unflipped card front. */
-const RECENT_JOB_NOTES_COUNT = 3;
+/** Latest note with text shown on the unflipped card front. */
+const RECENT_JOB_NOTES_COUNT = 1;
 /** Max chars per feed note body on the card front. */
 const RECENT_JOB_NOTE_BODY_MAX = 140;
 /** Must match backend MAX_JOB_CONTACTS. */
@@ -129,13 +129,26 @@ let cloneFromJobId = null;
 /** When set, directory form PATCHes this contact instead of POST create. */
 let contactsDirectoryEditingId = null;
 
+/** Strip zero-width chars so invisible-only bodies are not treated as displayable. */
+const NOTE_BODY_INVISIBLE_RE = /[\u200B-\u200D\uFEFF]/g;
+
+/**
+ * @param {string|null|undefined} body
+ * @returns {string}
+ */
+function normalizeNoteBody(body) {
+  return String(body ?? "")
+    .replace(NOTE_BODY_INVISIBLE_RE, "")
+    .trim();
+}
+
 /**
  * @param {string|null|undefined} body
  * @param {number} [maxLen]
  * @returns {{ text: string, truncated: boolean, full: string }}
  */
 function truncateNoteBody(body, maxLen = RECENT_JOB_NOTE_BODY_MAX) {
-  const full = (body ?? "").trim();
+  const full = normalizeNoteBody(body);
   if (!full) return { text: "", truncated: false, full: "" };
   if (full.length <= maxLen) return { text: full, truncated: false, full };
   return { text: full.slice(0, maxLen) + "…", truncated: true, full };
@@ -145,7 +158,7 @@ function truncateNoteBody(body, maxLen = RECENT_JOB_NOTE_BODY_MAX) {
  * @param {{ body?: string|null }|null|undefined} note
  */
 function noteHasDisplayBody(note) {
-  return Boolean((note?.body ?? "").trim());
+  return Boolean(normalizeNoteBody(note?.body));
 }
 
 function openNotesModalFromCard(e, job) {
@@ -177,11 +190,6 @@ function renderRecentJobNotesPreview(job) {
       total > 0 ? "Notes have no text — tap to open" : "No notes yet — tap to add";
     children.push(el("p", { class: "card__recent-notes__empty-hint" }, emptyHint));
   } else {
-    if (moreCount > 0) {
-      children.push(
-        el("span", { class: "card__recent-notes-more" }, `+${moreCount} more`)
-      );
-    }
     const list = el("ul", { class: "card__recent-notes-list" });
     for (const note of recent) {
       const authoredBy = note.author_username || `User #${note.author_user_id}`;
@@ -199,6 +207,11 @@ function renderRecentJobNotesPreview(job) {
       );
     }
     children.push(list);
+    if (moreCount > 0) {
+      children.push(
+        el("span", { class: "card__recent-notes-more" }, `+${moreCount} more`)
+      );
+    }
   }
 
   const customer = job.customer_name || "job";
@@ -1120,6 +1133,11 @@ function canArchive() {
   return state.user?.role === "admin";
 }
 
+function canViewArchivedJobs() {
+  const role = state.user?.role;
+  return role === "admin" || role === "office";
+}
+
 function canEditJobAdmin() {
   const role = state.user?.role;
   return role === "admin" || role === "office";
@@ -1176,18 +1194,10 @@ function shouldUseMobileUserMenu(menuEl) {
   return window.getComputedStyle(menuEl).display === "none";
 }
 
-function setArchivedMenuLabel() {
-  const label = state.includeArchived ? "View active projects" : "View archived projects";
-  for (const archivedBtn of $$('[data-menu-action="view-archived"]')) {
-    archivedBtn.textContent = label;
-  }
-}
-
 function syncUserMenu() {
   const userLabel = $("#user-menu-label");
   if (userLabel) userLabel.textContent = state.user?.username || "Account";
   renderUserMenuBadge();
-  setArchivedMenuLabel();
 }
 
 function setNotificationsState(items) {
@@ -1687,7 +1697,7 @@ const apiClient = {
   me: () => api("/auth/me"),
   listJobs: () => {
     const params = new URLSearchParams();
-    if (state.user?.role === "admin" && state.includeArchived) {
+    if (canViewArchivedJobs() && state.includeArchived) {
       params.set("include_archived", "true");
     }
     const qs = params.toString();
@@ -3592,7 +3602,7 @@ async function exportSchedulePdf() {
   const btn = $("#overview-export-pdf-btn");
   if (btn) btn.disabled = true;
   try {
-    const includeArchived = state.user?.role === "admin" && state.includeArchived;
+    const includeArchived = canViewArchivedJobs() && state.includeArchived;
     const blob = await apiClient.fetchSchedulePdfBlob(includeArchived);
     const today = new Date();
     const stamp = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
@@ -6259,10 +6269,10 @@ function applyRoleVisibility() {
   for (const btn of $$('[data-menu-action="contacts"]')) btn.hidden = !canCreateJob();
   for (const btn of $$('[data-menu-action="review-feedback"]')) btn.hidden = !canManageUsers();
   for (const btn of $$('[data-menu-action="task-templates"]')) btn.hidden = !canCreateJob();
-  for (const btn of $$('[data-menu-action="view-archived"]')) btn.hidden = !canArchive();
   for (const btn of $$('[data-job-type-filter="sales"]')) btn.hidden = !canViewSalesJobs();
+  for (const btn of $$('[data-job-type-filter="archived"]')) btn.hidden = !canViewArchivedJobs();
+  if (!canViewArchivedJobs() && state.includeArchived) state.includeArchived = false;
   renderUserMenuBadge();
-  setArchivedMenuLabel();
 }
 
 // ---- Boot ----------------------------------------------------------------
@@ -6290,6 +6300,9 @@ function refreshJobTypeTabs() {
   if (!canViewSalesJobs() && state.jobTypeFilter === "sales") {
     state.jobTypeFilter = "all";
   }
+  if (!canViewArchivedJobs() && state.includeArchived) {
+    state.includeArchived = false;
+  }
   const counts = {
     all: state.jobs.length,
     sales: 0,
@@ -6303,23 +6316,44 @@ function refreshJobTypeTabs() {
   }
   for (const btn of $$("[data-job-type-filter]")) {
     const key = btn.dataset.jobTypeFilter || "all";
+    if (key === "archived") {
+      btn.hidden = !canViewArchivedJobs();
+      btn.textContent = "Archived";
+      btn.classList.toggle("is-active", state.includeArchived);
+      continue;
+    }
     const isSalesBtn = key === "sales";
     if (isSalesBtn) btn.hidden = !canViewSalesJobs();
     const label = JOB_TYPE_LABELS[key] || JOB_TYPE_LABELS.all;
     const count = isSalesBtn && !canViewSalesJobs() ? 0 : (counts[key] ?? 0);
     btn.textContent = `${label} (${count})`;
-    btn.classList.toggle("is-active", key === state.jobTypeFilter);
+    btn.classList.toggle("is-active", !state.includeArchived && key === state.jobTypeFilter);
   }
 }
 
 function wireJobTypeTabs() {
   for (const btn of $$("[data-job-type-filter]")) {
-    btn.addEventListener("click", () => {
+    btn.addEventListener("click", async () => {
       const selected = btn.dataset.jobTypeFilter || "all";
+      if (selected === "archived") {
+        if (!canViewArchivedJobs()) return;
+        state.includeArchived = true;
+        state.jobTypeFilter = "all";
+        refreshJobTypeTabs();
+        await loadJobs();
+        return;
+      }
       if (selected === "sales" && !canViewSalesJobs()) {
         state.jobTypeFilter = "all";
         refreshJobTypeTabs();
         applyFilter();
+        return;
+      }
+      if (state.includeArchived) {
+        state.includeArchived = false;
+        state.jobTypeFilter = selected;
+        refreshJobTypeTabs();
+        await loadJobs();
         return;
       }
       state.jobTypeFilter = selected;
@@ -6388,12 +6422,6 @@ function wireShell() {
     "task-templates": async () => {
       if (!canCreateJob()) return;
       openTaskTemplatesModal();
-    },
-    "view-archived": async () => {
-      if (!canArchive()) return;
-      state.includeArchived = !state.includeArchived;
-      setArchivedMenuLabel();
-      await loadJobs();
     },
   };
   for (const btn of $$("[data-menu-action]")) {

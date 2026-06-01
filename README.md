@@ -238,7 +238,7 @@ Send `Authorization: Bearer <token>` on protected routes (obtained from **`POST 
 | Method | Path | Purpose |
 | ------ | ---- | ------- |
 | GET | `/api/health` | Liveness check; returns DB dialect and env name (**no auth**) |
-| GET | `/api/jobs` | List jobs; query `include_archived=true` to include archived |
+| GET | `/api/jobs` | List active jobs; query `include_archived=true` returns archived jobs only (**admin**, **office**; use **Archived** pill in UI) |
 | GET | `/api/jobs/{id}` | Single job with tasks + progress |
 | POST | `/api/jobs` | Create a job (**admin**, **office**); auto-seeds **33** default tasks |
 | PATCH | `/api/jobs/{id}` | Partial update. **Field** role may only change **`notes`**. **Admin** only for **archive**/unarchive. |
