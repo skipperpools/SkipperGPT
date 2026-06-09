@@ -61,6 +61,9 @@ TABLE_ORDER: List[str] = [
     "job_sketches",
     "feedback_items",
     "user_tasks",
+    "user_task_attachments",
+    "user_task_notifications",
+    "push_subscriptions",
     "notification_items",
 ]
 

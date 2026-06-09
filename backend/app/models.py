@@ -81,6 +81,9 @@ class User(Base):
     is_active: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=True, server_default="1"
     )
+    push_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="0"
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -88,11 +91,16 @@ class User(Base):
         foreign_keys="JobNote.author_user_id",
         passive_deletes=True,
     )
-    user_tasks: Mapped[List["UserTask"]] = relationship(
-        back_populates="owner",
-        cascade="all, delete-orphan",
+    created_tasks: Mapped[List["UserTask"]] = relationship(
+        back_populates="creator",
+        foreign_keys="UserTask.user_id",
         passive_deletes=True,
         order_by="UserTask.sort_order",
+    )
+    push_subscriptions: Mapped[List["PushSubscription"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
     )
 
 
@@ -383,6 +391,12 @@ class UserTask(Base):
         nullable=False,
         index=True,
     )
+    assignee_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     completed: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default="0"
@@ -402,7 +416,98 @@ class UserTask(Base):
         onupdate=func.now(),
     )
 
-    owner: Mapped["User"] = relationship(back_populates="user_tasks")
+    creator: Mapped["User"] = relationship(
+        back_populates="created_tasks",
+        foreign_keys=[user_id],
+    )
+    assignee: Mapped["User"] = relationship(foreign_keys=[assignee_id])
+    attachments: Mapped[List["UserTaskAttachment"]] = relationship(
+        back_populates="task",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="UserTaskAttachment.uploaded_at",
+    )
+
+
+class UserTaskAttachment(Base):
+    __tablename__ = "user_task_attachments"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_task_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("user_tasks.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    original_filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    stored_path: Mapped[str] = mapped_column(String(512), nullable=False)
+    content_type: Mapped[str] = mapped_column(String(128), nullable=False)
+    attachment_kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    uploaded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    uploaded_by_user_id: Mapped[Optional[int]] = mapped_column(
+        Integer,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+    task: Mapped[UserTask] = relationship(back_populates="attachments")
+    uploaded_by: Mapped[Optional["User"]] = relationship(
+        foreign_keys=[uploaded_by_user_id],
+    )
+
+
+class UserTaskNotification(Base):
+    __tablename__ = "user_task_notifications"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    recipient_user_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    user_task_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("user_tasks.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    event: Mapped[str] = mapped_column(String(32), nullable=False)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    read: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="0"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    recipient: Mapped["User"] = relationship(foreign_keys=[recipient_user_id])
+    task: Mapped[UserTask] = relationship(foreign_keys=[user_task_id])
+
+
+class PushSubscription(Base):
+    __tablename__ = "push_subscriptions"
+    __table_args__ = (UniqueConstraint("endpoint", name="uq_push_subscriptions_endpoint"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    endpoint: Mapped[str] = mapped_column(String(512), nullable=False)
+    p256dh: Mapped[str] = mapped_column(String(255), nullable=False)
+    auth: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    user: Mapped["User"] = relationship(back_populates="push_subscriptions")
 
 
 class NotificationItem(Base):

@@ -33,6 +33,9 @@ from .routers import (
     job_sketches,
     jobs,
     notifications,
+    push,
+    user_task_attachments,
+    user_task_notifications,
     user_tasks,
     users,
 )
@@ -204,6 +207,71 @@ def _ensure_notification_billed_columns() -> None:
             logger.info("Added column notification_items.billed_by_user_id")
 
 
+def _user_tasks_column_names(conn, dialect: str) -> set[str]:
+    if dialect == "sqlite":
+        rows = conn.exec_driver_sql("PRAGMA table_info(user_tasks)").fetchall()
+        return {row[1] for row in rows}
+    result = conn.execute(
+        text(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_schema = current_schema() AND table_name = :t"
+        ),
+        {"t": "user_tasks"},
+    )
+    return {row[0] for row in result}
+
+
+def _users_column_names(conn, dialect: str) -> set[str]:
+    if dialect == "sqlite":
+        rows = conn.exec_driver_sql("PRAGMA table_info(users)").fetchall()
+        return {row[1] for row in rows}
+    result = conn.execute(
+        text(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_schema = current_schema() AND table_name = :t"
+        ),
+        {"t": "users"},
+    )
+    return {row[0] for row in result}
+
+
+def _ensure_user_task_assignee_column() -> None:
+    dialect = engine.dialect.name
+    with engine.begin() as conn:
+        cols = _user_tasks_column_names(conn, dialect)
+        if "assignee_id" not in cols:
+            conn.execute(text("ALTER TABLE user_tasks ADD COLUMN assignee_id INTEGER"))
+            logger.info("Added column user_tasks.assignee_id")
+        conn.execute(text("UPDATE user_tasks SET assignee_id = user_id WHERE assignee_id IS NULL"))
+
+
+def _ensure_user_push_enabled_column() -> None:
+    dialect = engine.dialect.name
+    with engine.begin() as conn:
+        cols = _users_column_names(conn, dialect)
+        if "push_enabled" not in cols:
+            conn.execute(
+                text("ALTER TABLE users ADD COLUMN push_enabled BOOLEAN NOT NULL DEFAULT 0")
+            )
+            logger.info("Added column users.push_enabled")
+
+
+def _ensure_new_user_task_tables() -> None:
+    table_names = set(inspect(engine).get_table_names())
+    to_create = []
+    for model_name in (
+        "UserTaskAttachment",
+        "UserTaskNotification",
+        "PushSubscription",
+    ):
+        table = getattr(models, model_name).__table__
+        if table.name not in table_names:
+            to_create.append(table)
+    if to_create:
+        Base.metadata.create_all(bind=engine, tables=to_create)
+        logger.info("Created tables: %s", ", ".join(t.name for t in to_create))
+
+
 def _ensure_job_document_category_column() -> None:
     """Add job_documents.category if missing and default legacy docs to field."""
     dialect = engine.dialect.name
@@ -255,7 +323,7 @@ async def _set_frontend_cache_headers(request: Request, call_next):
     """Avoid sticky mobile browser caches for frontend shell/assets."""
     response = await call_next(request)
     path = request.url.path
-    if path in {"/", "/index.html", "/app.js", "/sketch-editor.js", "/styles.css"}:
+    if path in {"/", "/index.html", "/app.js", "/sketch-editor.js", "/styles.css", "/sw.js"}:
         # Force revalidation so users see fresh UI without clearing browser data.
         response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
         response.headers["Pragma"] = "no-cache"
@@ -275,6 +343,9 @@ def _on_startup() -> None:
     _ensure_attachments_synced_at_column()
     _migrate_legacy_contacts_and_drop_column()
     _ensure_notification_billed_columns()
+    _ensure_user_task_assignee_column()
+    _ensure_user_push_enabled_column()
+    _ensure_new_user_task_tables()
     _ensure_job_document_category_column()
     logger.info(
         "Skipper dashboard ready | env=%s dialect=%s db=%s",
@@ -327,7 +398,10 @@ app.include_router(job_sketches.router, prefix="/api/jobs")
 app.include_router(users.router)
 app.include_router(feedback.router)
 app.include_router(user_tasks.router)
+app.include_router(user_task_attachments.router)
+app.include_router(user_task_notifications.router)
 app.include_router(notifications.router)
+app.include_router(push.router)
 
 
 # Shared brand assets (favicon, logos) live next to the repo root `graphics/` folder.

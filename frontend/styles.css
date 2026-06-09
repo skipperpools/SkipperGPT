@@ -149,6 +149,12 @@ input, textarea, select { font-family: inherit; font-size: 1rem; }
   gap: 8px;
 }
 
+.topbar__user-badges {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
 .topbar__user-badge {
   min-width: 20px;
   height: 20px;
@@ -162,6 +168,106 @@ input, textarea, select { font-family: inherit; font-size: 1rem; }
   font-size: 0.72rem;
   font-weight: 700;
   line-height: 1;
+}
+
+.topbar__user-badge--billing {
+  background: #2d8a4e;
+  color: #fff;
+}
+
+.user-tasks-section-title {
+  margin: 1.25rem 0 0.35rem;
+  font-size: 0.95rem;
+  font-weight: 700;
+}
+
+.user-tasks-section-title--created {
+  margin-top: 1.75rem;
+  padding-top: 1rem;
+  border-top: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+.user-task-notifications-list {
+  margin: 0.5rem 0 1rem;
+}
+
+.user-task-notification {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.5rem 0.65rem;
+  margin-bottom: 0.35rem;
+  border-radius: 6px;
+  background: rgba(216, 58, 58, 0.08);
+  border: 1px solid rgba(216, 58, 58, 0.15);
+  font-size: 0.85rem;
+}
+
+.user-tasks-section-hint {
+  margin: 0 0 0.5rem;
+  font-size: 0.8rem;
+  color: rgba(0, 0, 0, 0.55);
+}
+
+.user-task__meta {
+  font-size: 0.78rem;
+  color: rgba(0, 0, 0, 0.55);
+  margin-top: 0.25rem;
+}
+
+.user-task__assignee-select {
+  max-width: 100%;
+  margin-top: 0.35rem;
+}
+
+.user-task__attachments {
+  margin-top: 0.5rem;
+}
+
+.user-task__attachment-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.35rem;
+}
+
+.user-task__attachment-item {
+  position: relative;
+  width: 72px;
+}
+
+.user-task__attachment-thumb {
+  width: 72px;
+  height: 72px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+}
+
+.user-task__attachment-pdf {
+  width: 72px;
+  height: 72px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.65rem;
+  text-align: center;
+  padding: 0.25rem;
+  border-radius: 6px;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  background: rgba(0, 0, 0, 0.04);
+  word-break: break-word;
+}
+
+.user-task__attachment-remove {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  min-width: 0;
+  padding: 0 4px;
+  font-size: 0.65rem;
+  line-height: 1.2;
 }
 
 .topbar__user-btn:hover,

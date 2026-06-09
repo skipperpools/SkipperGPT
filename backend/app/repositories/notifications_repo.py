@@ -45,6 +45,17 @@ def list_notifications(db: Session, *, limit: int = 200) -> List[NotificationIte
     return list(db.execute(stmt).scalars().all())
 
 
+def count_unbilled(db: Session) -> int:
+    from sqlalchemy import func
+
+    stmt = (
+        select(func.count())
+        .select_from(NotificationItem)
+        .where(NotificationItem.billed.is_(False))
+    )
+    return int(db.execute(stmt).scalar_one())
+
+
 def get_notification(db: Session, *, notification_id: int) -> Optional[NotificationItem]:
     stmt = select(NotificationItem).where(NotificationItem.id == notification_id)
     return db.execute(stmt).scalar_one_or_none()

@@ -11,6 +11,7 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 from .job_docs_fs import absolute_file_path as doc_absolute_path
 from .job_photos_fs import absolute_file_path as photo_absolute_path
 from .job_sketches_fs import absolute_file_path as sketch_absolute_path
+from .user_task_attachments_fs import absolute_file_path as task_attachment_absolute_path
 
 logger = logging.getLogger("skipper.thumbnails")
 
@@ -23,6 +24,32 @@ _THUMBS_DIR = ".thumbs"
 _DISPLAY_DIR = ".display"
 
 Kind = Literal["photo", "document", "sketch"]
+
+
+def _absolute_original_path(docs_root: Path, stored_path: str) -> Path | None:
+    for resolver in (photo_absolute_path, doc_absolute_path, task_attachment_absolute_path):
+        try:
+            return resolver(docs_root, stored_path)
+        except ValueError:
+            continue
+    return None
+
+
+def _absolute_thumb_path(docs_root: Path, thumb_rel: str, stored_path: str) -> Path | None:
+    if stored_path.replace("\\", "/").startswith("UserTaskAttachments/"):
+        try:
+            return task_attachment_absolute_path(docs_root, thumb_rel)
+        except ValueError:
+            return None
+    if stored_path.replace("\\", "/").startswith("Photos/"):
+        try:
+            return photo_absolute_path(docs_root, thumb_rel)
+        except ValueError:
+            return None
+    try:
+        return doc_absolute_path(docs_root, thumb_rel)
+    except ValueError:
+        return None
 
 
 def photo_thumb_relpath(stored_path: str) -> str:
@@ -60,9 +87,8 @@ def _prepare_rgb_for_webp(im: Image.Image) -> Image.Image:
 
 def ensure_photo_thumbnail(docs_root: Path, stored_path: str) -> Path | None:
     """Create thumbnail next to original if missing. Returns path or None on failure."""
-    try:
-        original = photo_absolute_path(docs_root, stored_path)
-    except ValueError:
+    original = _absolute_original_path(docs_root, stored_path)
+    if original is None:
         logger.warning("Invalid photo stored_path for thumbnail: %s", stored_path)
         return None
 
@@ -70,9 +96,8 @@ def ensure_photo_thumbnail(docs_root: Path, stored_path: str) -> Path | None:
         return None
 
     thumb_rel = photo_thumb_relpath(stored_path)
-    try:
-        thumb_abs = photo_absolute_path(docs_root, thumb_rel)
-    except ValueError:
+    thumb_abs = _absolute_thumb_path(docs_root, thumb_rel, stored_path)
+    if thumb_abs is None:
         logger.warning("Invalid thumb path for photo: %s", thumb_rel)
         return None
 
@@ -180,9 +205,8 @@ def ensure_sketch_thumbnail(docs_root: Path, stored_path: str) -> Path | None:
 
 def ensure_pdf_thumbnail(docs_root: Path, stored_path: str) -> Path | None:
     """Render first PDF page to WebP thumbnail. Returns path or None on failure."""
-    try:
-        original = doc_absolute_path(docs_root, stored_path)
-    except ValueError:
+    original = _absolute_original_path(docs_root, stored_path)
+    if original is None:
         logger.warning("Invalid document stored_path for thumbnail: %s", stored_path)
         return None
 
@@ -190,9 +214,8 @@ def ensure_pdf_thumbnail(docs_root: Path, stored_path: str) -> Path | None:
         return None
 
     thumb_rel = doc_thumb_relpath(stored_path)
-    try:
-        thumb_abs = doc_absolute_path(docs_root, thumb_rel)
-    except ValueError:
+    thumb_abs = _absolute_thumb_path(docs_root, thumb_rel, stored_path)
+    if thumb_abs is None:
         logger.warning("Invalid thumb path for document: %s", thumb_rel)
         return None
 

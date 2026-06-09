@@ -17,6 +17,9 @@ class Settings(BaseSettings):
     # PDF library root; files live under {docs_root}/Docs/<job_folder>/...
     docs_root: Path = Field(default=PROJECT_ROOT)
     max_upload_mb: int = 25
+    vapid_public_key: Optional[str] = None
+    vapid_private_key: Optional[str] = None
+    vapid_contact_email: Optional[str] = None
     # Optional override for the master `Schedules.xlsx` path (default: project root).
     schedule_xlsx_path: Optional[str] = None
     # JWT signing (HS256). Override with a long random string in production.

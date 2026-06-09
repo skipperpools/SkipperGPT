@@ -24,6 +24,7 @@ MANIFEST_NAME = "manifest.json"
 DB_ARCHIVE_PATH = "database/skipper.db"
 DOCS_ARCHIVE_DIR = "files/Docs/"
 PHOTOS_ARCHIVE_DIR = "files/Photos/"
+USER_TASK_ATTACHMENTS_ARCHIVE_DIR = "files/UserTaskAttachments/"
 USERS_MANIFEST_PATH = "exports/users_manifest.json"
 
 
@@ -33,6 +34,7 @@ class LocalPaths:
     docs_root: Path
     docs_dir: Path
     photos_dir: Path
+    user_task_attachments_dir: Path
     sqlite_db: Path
 
 
@@ -60,11 +62,11 @@ def _local_paths() -> LocalPaths:
         docs_root=docs_root,
         docs_dir=(docs_root / "Docs").resolve(),
         photos_dir=(docs_root / "Photos").resolve(),
+        user_task_attachments_dir=(docs_root / "UserTaskAttachments").resolve(),
         sqlite_db=_resolve_sqlite_db_path(),
     )
 
 
-<<<<<<< HEAD
 def _resolve_import_archive(raw: Path) -> Path:
     """Path to a .zip file, or a directory containing backup zips (newest wins)."""
     p = raw.expanduser().resolve()
@@ -78,7 +80,8 @@ def _resolve_import_archive(raw: Path) -> Path:
         print(f"[backup] Using newest .zip in folder: {chosen.name}")
         return chosen
     raise FileNotFoundError(f"Backup archive not found: {p}")
-=======
+
+
 def _users_manifest_data(db_path: Path) -> tuple[int, list[dict]]:
     """Read non-sensitive user rows for inclusion in backup (hashes stay in DB file only)."""
     if not db_path.is_file():
@@ -111,7 +114,6 @@ def _users_manifest_data(db_path: Path) -> tuple[int, list[dict]]:
         return 0, []
     finally:
         conn.close()
->>>>>>> abc06371098963995ac523357a95aaec610a7dc5
 
 
 def _write_tree_to_zip(zip_file: ZipFile, source_root: Path, archive_root: str) -> int:
@@ -133,6 +135,7 @@ def _build_manifest(
     db_present: bool,
     docs_files: int,
     photos_files: int,
+    user_task_attachments_files: int,
     user_count: int,
 ) -> dict:
     return {
@@ -150,6 +153,8 @@ def _build_manifest(
             "photos_dir_exists": paths.photos_dir.exists(),
             "docs_file_count": docs_files,
             "photos_file_count": photos_files,
+            "user_task_attachments_dir_exists": paths.user_task_attachments_dir.exists(),
+            "user_task_attachments_file_count": user_task_attachments_files,
             "users_manifest_file": db_present,
         },
     }
@@ -166,10 +171,14 @@ def export_bundle(output_path: Path | None = None) -> Path:
     user_count, user_rows = _users_manifest_data(paths.sqlite_db)
     docs_files = 0
     photos_files = 0
+    user_task_attachments_files = 0
 
     with ZipFile(output_path, mode="w", compression=ZIP_DEFLATED) as bundle:
         docs_files = _write_tree_to_zip(bundle, paths.docs_dir, DOCS_ARCHIVE_DIR)
         photos_files = _write_tree_to_zip(bundle, paths.photos_dir, PHOTOS_ARCHIVE_DIR)
+        user_task_attachments_files = _write_tree_to_zip(
+            bundle, paths.user_task_attachments_dir, USER_TASK_ATTACHMENTS_ARCHIVE_DIR
+        )
         if db_present:
             bundle.write(paths.sqlite_db, DB_ARCHIVE_PATH)
             users_manifest = {
@@ -187,6 +196,7 @@ def export_bundle(output_path: Path | None = None) -> Path:
             db_present=db_present,
             docs_files=docs_files,
             photos_files=photos_files,
+            user_task_attachments_files=user_task_attachments_files,
             user_count=user_count,
         )
         bundle.writestr(MANIFEST_NAME, json.dumps(manifest, indent=2))
@@ -196,6 +206,10 @@ def export_bundle(output_path: Path | None = None) -> Path:
     print(f"[backup] Users backed up (in DB + manifest): {user_count}")
     print(f"[backup] Docs files: {docs_files} ({paths.docs_dir})")
     print(f"[backup] Photos files: {photos_files} ({paths.photos_dir})")
+    print(
+        f"[backup] User task attachment files: {user_task_attachments_files} "
+        f"({paths.user_task_attachments_dir})"
+    )
     return output_path
 
 
@@ -234,6 +248,13 @@ def import_bundle(archive_path: Path, *, pre_backup: bool = True) -> None:
         _require_archive_entry(names, DB_ARCHIVE_PATH)
         _require_archive_prefix(names, DOCS_ARCHIVE_DIR)
         _require_archive_prefix(names, PHOTOS_ARCHIVE_DIR)
+        if not any(
+            name == USER_TASK_ATTACHMENTS_ARCHIVE_DIR
+            or name.startswith(USER_TASK_ATTACHMENTS_ARCHIVE_DIR)
+            for name in names
+        ):
+            # Older bundles may omit this prefix; create empty dir on restore.
+            pass
         try:
             manifest = json.loads(bundle.read(MANIFEST_NAME).decode("utf-8"))
         except json.JSONDecodeError as exc:
@@ -272,12 +293,22 @@ def import_bundle(archive_path: Path, *, pre_backup: bool = True) -> None:
 
         _restore_tree(tmp_root, DOCS_ARCHIVE_DIR.rstrip("/"), paths.docs_dir)
         _restore_tree(tmp_root, PHOTOS_ARCHIVE_DIR.rstrip("/"), paths.photos_dir)
+        extracted_uta = tmp_root / USER_TASK_ATTACHMENTS_ARCHIVE_DIR.rstrip("/")
+        if extracted_uta.exists():
+            _restore_tree(
+                tmp_root,
+                USER_TASK_ATTACHMENTS_ARCHIVE_DIR.rstrip("/"),
+                paths.user_task_attachments_dir,
+            )
+        else:
+            paths.user_task_attachments_dir.mkdir(parents=True, exist_ok=True)
 
     user_after, _ = _users_manifest_data(paths.sqlite_db)
     print(f"[backup] Import complete from: {archive_path}")
     print(f"[backup] Restored DB: {paths.sqlite_db}")
     print(f"[backup] Restored Docs: {paths.docs_dir}")
     print(f"[backup] Restored Photos: {paths.photos_dir}")
+    print(f"[backup] Restored UserTaskAttachments: {paths.user_task_attachments_dir}")
     print(f"[backup] Users in restored database: {user_after}")
 
 

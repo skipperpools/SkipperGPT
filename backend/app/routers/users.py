@@ -8,13 +8,26 @@ from sqlalchemy.orm import Session
 
 from ..auth_utils import get_password_hash
 from ..database import get_db
-from ..deps.auth import require_roles
+from ..deps.auth import get_current_user, require_roles
 from ..models import User
 from ..repositories import users_repo
-from ..schemas import UserCreate, UserRead, UserUpdate
+from ..schemas import AssignableUserRead, UserCreate, UserRead, UserUpdate
 
 router = APIRouter(prefix="/api/users", tags=["users"])
 _admin = Depends(require_roles("admin"))
+
+
+@router.get("/assignable", response_model=list[AssignableUserRead])
+def list_assignable_users(
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+) -> list[AssignableUserRead]:
+    users = users_repo.list_users(db)
+    return [
+        AssignableUserRead(id=u.id, username=u.username)
+        for u in users
+        if u.is_active
+    ]
 
 
 @router.get("", response_model=List[UserRead])

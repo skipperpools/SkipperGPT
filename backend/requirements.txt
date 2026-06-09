@@ -15,3 +15,5 @@ python-jose[cryptography]>=3.3,<4.0
 
 # Postgres driver (Render Postgres / Supabase / any PostgreSQL).
 psycopg[binary]>=3.1,<4.0
+
+pywebpush>=2.0,<3.0

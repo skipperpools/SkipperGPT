@@ -402,6 +402,7 @@ class UserRead(BaseModel):
     username: str
     role: str
     is_active: bool
+    push_enabled: bool = False
     created_at: datetime
 
 
@@ -493,6 +494,7 @@ class UserTaskRead(BaseModel):
 
     id: int
     user_id: int
+    assignee_id: int
     title: str
     completed: bool
     note: Optional[str] = None
@@ -500,18 +502,35 @@ class UserTaskRead(BaseModel):
     completed_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
-    owner_username: Optional[str] = None
+    creator_username: Optional[str] = None
+    assignee_username: Optional[str] = None
+    attachments: List["UserTaskAttachmentRead"] = Field(default_factory=list)
+
+
+class UserTaskAttachmentRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    user_task_id: int
+    original_filename: str
+    content_type: str
+    attachment_kind: str
+    size_bytes: int
+    uploaded_at: datetime
+    uploaded_by_user_id: Optional[int] = None
 
 
 class UserTaskCreate(BaseModel):
     title: str = Field(..., min_length=1, max_length=USER_TASK_TITLE_MAX)
     note: Optional[str] = Field(None, max_length=USER_TASK_NOTE_MAX)
+    assignee_id: Optional[int] = None
 
 
 class UserTaskUpdate(BaseModel):
     title: Optional[str] = Field(None, min_length=1, max_length=USER_TASK_TITLE_MAX)
     note: Optional[str] = Field(None, max_length=USER_TASK_NOTE_MAX)
     completed: Optional[bool] = None
+    assignee_id: Optional[int] = None
 
 
 class UserTaskMove(BaseModel):
@@ -543,3 +562,45 @@ class NotificationRead(BaseModel):
 
 class NotificationUpdate(BaseModel):
     billed: bool
+
+
+class NotificationCountsRead(BaseModel):
+    billing_unbilled_count: int = 0
+    assigned_open_count: int = 0
+    creator_unread_count: int = 0
+
+
+class UserTaskNotificationRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    recipient_user_id: int
+    user_task_id: int
+    event: str
+    title: str
+    message: str
+    read: bool
+    created_at: datetime
+
+
+class UserTaskNotificationUpdate(BaseModel):
+    read: bool
+
+
+class AssignableUserRead(BaseModel):
+    id: int
+    username: str
+
+
+class PushSubscriptionCreate(BaseModel):
+    endpoint: str = Field(..., min_length=1, max_length=512)
+    p256dh: str = Field(..., min_length=1, max_length=255)
+    auth: str = Field(..., min_length=1, max_length=255)
+
+
+class PushEnabledUpdate(BaseModel):
+    push_enabled: bool
+
+
+class VapidPublicKeyRead(BaseModel):
+    public_key: str

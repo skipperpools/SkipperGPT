@@ -19,7 +19,11 @@ const state = {
   /** @type {"cards" | "overview"} */
   view: "cards",
   notifications: [],
-  unbilledNotificationCount: 0,
+  billingUnbilledCount: 0,
+  assignedOpenCount: 0,
+  creatorUnreadCount: 0,
+  assignableUsers: [],
+  pushEnabled: false,
   /** @type {Array<{id:number,label?:string,name?:string,phone?:string,email?:string}>} */
   contactsCatalog: [],
   /** @type {number|null} job whose card should show details after a full grid rerender */
@@ -40,6 +44,7 @@ const poller = {
   channels: {
     jobs: { inFlight: false, failCount: 0, lastSig: "" },
     notifications: { inFlight: false, failCount: 0, lastSig: "" },
+    notificationCounts: { inFlight: false, failCount: 0, lastSig: "" },
     feedbackMine: { inFlight: false, failCount: 0, lastSig: "" },
     feedbackAll: { inFlight: false, failCount: 0, lastSig: "" },
     userTasksMine: { inFlight: false, failCount: 0, lastSig: "" },
@@ -1197,13 +1202,106 @@ function shouldUseMobileUserMenu(menuEl) {
 function syncUserMenu() {
   const userLabel = $("#user-menu-label");
   if (userLabel) userLabel.textContent = state.user?.username || "Account";
+  state.pushEnabled = Boolean(state.user?.push_enabled);
+  syncPushMenuLabel();
   renderUserMenuBadge();
+}
+
+function syncPushMenuLabel() {
+  const label = state.pushEnabled ? "On" : "Off";
+  for (const btn of $$('[data-menu-action="push-toggle"]')) {
+    btn.textContent = `Push notifications: ${label}`;
+  }
+}
+
+function urlBase64ToUint8Array(base64String) {
+  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const raw = atob(base64);
+  const arr = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i += 1) arr[i] = raw.charCodeAt(i);
+  return arr;
+}
+
+async function registerPushSubscription() {
+  if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
+    toast("Push notifications are not supported in this browser", "error");
+    return false;
+  }
+  const perm = await Notification.requestPermission();
+  if (perm !== "granted") {
+    toast("Push notifications were not enabled", "error");
+    return false;
+  }
+  try {
+    const reg = await navigator.serviceWorker.register("/sw.js");
+    const vapid = await apiClient.getVapidPublicKey();
+    const sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(vapid.public_key),
+    });
+    const json = sub.toJSON();
+    await apiClient.subscribePush({
+      endpoint: json.endpoint,
+      p256dh: json.keys.p256dh,
+      auth: json.keys.auth,
+    });
+    const res = await apiClient.setPushEnabled(true);
+    state.pushEnabled = Boolean(res.push_enabled);
+    if (state.user) state.user.push_enabled = state.pushEnabled;
+    syncPushMenuLabel();
+    return true;
+  } catch (err) {
+    toast(err.message || "Failed to enable push notifications", "error");
+    return false;
+  }
+}
+
+async function disablePushNotifications() {
+  try {
+    const res = await apiClient.setPushEnabled(false);
+    state.pushEnabled = Boolean(res.push_enabled);
+    if (state.user) state.user.push_enabled = state.pushEnabled;
+    syncPushMenuLabel();
+  } catch (err) {
+    toast(err.message, "error");
+  }
+}
+
+async function togglePushNotifications() {
+  if (state.pushEnabled) {
+    await disablePushNotifications();
+    toast("Push notifications disabled", "success");
+    return;
+  }
+  const ok = await registerPushSubscription();
+  if (ok) toast("Push notifications enabled", "success");
+}
+
+function maybePromptPushOnAssignment() {
+  const key = "skipper_push_assignment_prompt";
+  if (localStorage.getItem(key) === "1" || state.pushEnabled) return;
+  if (!window.confirm("Enable push notifications for task updates?")) {
+    localStorage.setItem(key, "1");
+    return;
+  }
+  localStorage.setItem(key, "1");
+  registerPushSubscription();
 }
 
 function setNotificationsState(items) {
   state.notifications = Array.isArray(items) ? items : [];
-  state.unbilledNotificationCount = state.notifications.filter((item) => !item.billed).length;
+}
+
+function setNotificationCounts(counts) {
+  state.billingUnbilledCount = Number(counts?.billing_unbilled_count || 0);
+  state.assignedOpenCount = Number(counts?.assigned_open_count || 0);
+  state.creatorUnreadCount = Number(counts?.creator_unread_count || 0);
   renderUserMenuBadge();
+}
+
+function taskBadgeCount() {
+  return state.assignedOpenCount + state.creatorUnreadCount;
 }
 
 function channelBackoffMs(ch) {
@@ -1335,8 +1433,33 @@ async function pollJobsChannel() {
   }
 }
 
+async function pollNotificationCountsChannel() {
+  const ch = poller.channels.notificationCounts;
+  if (ch.inFlight || !isChannelDue(ch)) return;
+  ch.inFlight = true;
+  try {
+    const counts = await apiClient.notificationCounts();
+    const sig = simpleSignature([
+      counts.billing_unbilled_count,
+      counts.assigned_open_count,
+      counts.creator_unread_count,
+    ]);
+    if (sig !== ch.lastSig) {
+      ch.lastSig = sig;
+      setNotificationCounts(counts);
+    }
+    markChannelSuccess(ch);
+  } catch {
+    markChannelFailure(ch);
+  } finally {
+    ch.inFlight = false;
+  }
+}
+
 async function pollNotificationsChannel() {
   if (!canViewBillingNotifications()) return;
+  const modal = $("#notifications-modal");
+  if (!modal || modal.hidden) return;
   const ch = poller.channels.notifications;
   if (ch.inFlight || !isChannelDue(ch)) return;
   ch.inFlight = true;
@@ -1346,10 +1469,7 @@ async function pollNotificationsChannel() {
     if (sig !== ch.lastSig) {
       ch.lastSig = sig;
       setNotificationsState(items);
-      const notificationsModal = $("#notifications-modal");
-      if (notificationsModal && !notificationsModal.hidden) {
-        await refreshNotificationsModal();
-      }
+      await refreshNotificationsModal();
     }
     markChannelSuccess(ch);
   } catch {
@@ -1361,7 +1481,16 @@ async function pollNotificationsChannel() {
 
 function userTasksSignature(items) {
   return simpleSignature(
-    (items ?? []).map((t) => [t.id, t.title, t.completed, t.note, t.sort_order])
+    (items ?? []).map((t) => [
+      t.id,
+      t.title,
+      t.completed,
+      t.note,
+      t.sort_order,
+      t.assignee_id,
+      t.user_id,
+      (t.attachments ?? []).length,
+    ])
   );
 }
 
@@ -1375,7 +1504,10 @@ async function pollUserTasksChannel() {
       if (sig !== mine.lastSig) {
         mine.lastSig = sig;
         const modal = $("#user-tasks-modal");
-        if (modal && !modal.hidden) await refreshUserTasksMineList();
+        if (modal && !modal.hidden) {
+          await refreshUserTasksMineList();
+          await refreshUserTasksCreatedList();
+        }
       }
       markChannelSuccess(mine);
     } catch {
@@ -1494,6 +1626,7 @@ async function pollContactsChannel() {
 async function runPollCycle() {
   if (!poller.active || document.hidden || !state.token) return;
   await pollJobsChannel();
+  await pollNotificationCountsChannel();
   await pollNotificationsChannel();
   await pollFeedbackChannel();
   await pollUserTasksChannel();
@@ -1524,34 +1657,50 @@ function stopAppPolling() {
 }
 
 function renderUserMenuBadge() {
-  const badge = $("#user-menu-badge");
-  if (!badge) return;
-  if (!canViewBillingNotifications()) {
-    badge.hidden = true;
-    badge.textContent = "0";
-    return;
+  const billingBadge = $("#user-menu-badge-billing");
+  const taskBadge = $("#user-menu-badge-tasks");
+  const wrap = $("#user-menu-badges");
+  const formatCount = (n) => (n > 99 ? "99+" : String(n));
+
+  const billingCount = canViewBillingNotifications() ? Number(state.billingUnbilledCount || 0) : 0;
+  const tasksCount = taskBadgeCount();
+
+  if (billingBadge) {
+    if (billingCount <= 0) {
+      billingBadge.hidden = true;
+      billingBadge.textContent = "0";
+    } else {
+      billingBadge.hidden = false;
+      billingBadge.textContent = formatCount(billingCount);
+    }
   }
-  const count = Number(state.unbilledNotificationCount || 0);
-  if (count <= 0) {
-    badge.hidden = true;
-    badge.textContent = "0";
-    return;
+
+  if (taskBadge) {
+    if (tasksCount <= 0) {
+      taskBadge.hidden = true;
+      taskBadge.textContent = "0";
+    } else {
+      taskBadge.hidden = false;
+      taskBadge.textContent = formatCount(tasksCount);
+    }
   }
-  badge.hidden = false;
-  badge.textContent = count > 99 ? "99+" : String(count);
+
+  if (wrap) {
+    wrap.hidden = billingCount <= 0 && tasksCount <= 0;
+  }
 }
 
-async function refreshNotificationBadgeCount() {
-  if (!canViewBillingNotifications()) {
-    setNotificationsState([]);
-    return;
-  }
+async function refreshNotificationCounts() {
   try {
-    const items = await apiClient.listNotifications();
-    setNotificationsState(items);
-    poller.channels.notifications.lastSig = simpleSignature(items);
+    const counts = await apiClient.notificationCounts();
+    setNotificationCounts(counts);
+    poller.channels.notificationCounts.lastSig = simpleSignature([
+      counts.billing_unbilled_count,
+      counts.assigned_open_count,
+      counts.creator_unread_count,
+    ]);
   } catch {
-    // Keep the last known count if this refresh fails.
+    // Keep last known counts.
   }
 }
 
@@ -1745,17 +1894,48 @@ const apiClient = {
   listAllFeedback: () => api("/feedback"),
   updateFeedback: (id, payload) => api(`/feedback/${id}`, { method: "PATCH", body: payload }),
   listMyUserTasks: () => api("/user-tasks/mine"),
-  listAllUserTasks: (userId) => {
-    const q = userId != null ? `?user_id=${encodeURIComponent(userId)}` : "";
+  listCreatedUserTasks: () => api("/user-tasks/created"),
+  listAllUserTasks: (assigneeId) => {
+    const q = assigneeId != null ? `?assignee_id=${encodeURIComponent(assigneeId)}` : "";
     return api(`/user-tasks${q}`);
   },
+  listAssignableUsers: () => api("/users/assignable"),
   createUserTask: (payload) => api("/user-tasks", { method: "POST", body: payload }),
   updateUserTask: (id, payload) => api(`/user-tasks/${id}`, { method: "PATCH", body: payload }),
   deleteUserTask: (id) => api(`/user-tasks/${id}`, { method: "DELETE" }),
   moveUserTask: (id, direction) =>
     api(`/user-tasks/${id}/move`, { method: "PATCH", body: { direction } }),
+  listUserTaskAttachments: (taskId) => api(`/user-tasks/${taskId}/attachments`),
+  uploadUserTaskAttachment: async (taskId, file) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    const res = await authFetch(`/user-tasks/${taskId}/attachments`, { method: "POST", body: fd });
+    if (!res.ok) throw new Error(await parseFetchError(res));
+    return res.json();
+  },
+  deleteUserTaskAttachment: async (taskId, attachmentId) => {
+    const res = await authFetch(`/user-tasks/${taskId}/attachments/${attachmentId}`, { method: "DELETE" });
+    if (!res.ok) throw new Error(await parseFetchError(res));
+  },
+  fetchUserTaskAttachmentThumbUrl: async (taskId, attachmentId) => {
+    const res = await authFetch(
+      `/user-tasks/${taskId}/attachments/${attachmentId}/thumbnail`,
+      AUTH_FETCH_MEDIA
+    );
+    if (!res.ok) throw new Error(await parseFetchError(res));
+    return URL.createObjectURL(await res.blob());
+  },
+  notificationCounts: () => api("/notifications/counts"),
   listNotifications: () => api("/notifications"),
   updateNotification: (id, payload) => api(`/notifications/${id}`, { method: "PATCH", body: payload }),
+  listMyTaskNotifications: () => api("/user-task-notifications/mine"),
+  markTaskNotificationRead: (id) =>
+    api(`/user-task-notifications/${id}`, { method: "PATCH", body: { read: true } }),
+  getVapidPublicKey: () => api("/push/vapid-public-key"),
+  subscribePush: (payload) => api("/push/subscribe", { method: "POST", body: payload }),
+  unsubscribePush: (payload) => api("/push/subscribe", { method: "DELETE", body: payload }),
+  setPushEnabled: (pushEnabled) =>
+    api("/push/me/push-enabled", { method: "PATCH", body: { push_enabled: pushEnabled } }),
   uploadJobDocument: async (jobId, files, title, category = "field") => {
     const list = Array.from(files ?? []);
     if (!list.length) throw new Error("No files selected");
@@ -3055,7 +3235,7 @@ function renderTaskRow(job, task, taskIndex, totalTasks) {
     try {
       const updated = await apiClient.updateTask(job.id, task.task_key, { status: next });
       replaceJob(updated);
-      await refreshNotificationBadgeCount();
+      await refreshNotificationCounts();
     } catch (err) {
       e.target.checked = !e.target.checked;
       toast(`Failed to update task: ${err.message}`, "error");
@@ -3076,7 +3256,7 @@ function renderTaskRow(job, task, taskIndex, totalTasks) {
     try {
       const updated = await apiClient.updateTask(job.id, task.task_key, { value: nextIsoOrNull });
       replaceJob(updated);
-      await refreshNotificationBadgeCount();
+      await refreshNotificationCounts();
       return true;
     } catch (err) {
       toast(`Failed to save date: ${err.message}`, "error");
@@ -3192,7 +3372,7 @@ function renderTaskRow(job, task, taskIndex, totalTasks) {
       try {
         const updated = await apiClient.updateTask(job.id, task.task_key, { note: v });
         replaceJob(updated);
-        await refreshNotificationBadgeCount();
+        await refreshNotificationCounts();
       } catch (err) {
         toast(`Failed to save note: ${err.message}`, "error");
       }
@@ -3212,7 +3392,7 @@ function renderTaskRow(job, task, taskIndex, totalTasks) {
         try {
           const updated = await apiClient.updateTask(job.id, task.task_key, { status: next });
           replaceJob(updated);
-          await refreshNotificationBadgeCount();
+          await refreshNotificationCounts();
         } catch (err) {
           toast(`Failed to update task: ${err.message}`, "error");
         }
@@ -3289,7 +3469,7 @@ function renderTaskRow(job, task, taskIndex, totalTasks) {
             try {
               const updated = await apiClient.deleteJobTask(job.id, task.task_key);
               replaceJob(updated);
-              await refreshNotificationBadgeCount();
+              await refreshNotificationCounts();
               toast("Task deleted", "success");
             } catch (err) {
               toast(`Failed to delete task: ${err.message}`, "error");
@@ -5175,18 +5355,31 @@ function wireModal() {
     e.preventDefault();
     const title = String($("#user-task-title")?.value ?? "").trim();
     const noteRaw = String($("#user-task-note")?.value ?? "").trim();
+    const assigneeRaw = $("#user-task-assignee")?.value;
+    const assigneeId = assigneeRaw ? Number(assigneeRaw) : null;
     if (!title) {
       toast("Title is required", "error");
       return;
     }
     try {
-      await apiClient.createUserTask({ title, note: noteRaw || null });
+      const payload = { title, note: noteRaw || null };
+      if (assigneeId) payload.assignee_id = assigneeId;
+      const created = await apiClient.createUserTask(payload);
       toast("Task added", "success");
       const titleEl = $("#user-task-title");
       const noteEl = $("#user-task-note");
       if (titleEl) titleEl.value = "";
       if (noteEl) noteEl.value = "";
+      if (
+        state.user &&
+        created.assignee_id === state.user.id &&
+        created.user_id !== state.user.id
+      ) {
+        maybePromptPushOnAssignment();
+      }
       await refreshUserTasksMineList();
+      await refreshUserTasksCreatedList();
+      await refreshNotificationCounts();
     } catch (err) {
       toast(err.message, "error");
     }
@@ -5631,33 +5824,129 @@ function openUserTasksModal() {
   const modal = $("#user-tasks-modal");
   if (!modal) return;
   modal.hidden = false;
+  loadAssignableUsersForForm();
   refreshUserTasksMineList();
+  refreshUserTasksCreatedList();
+  refreshCreatorTaskNotificationsList();
 }
 
-function closeUserTasksModal() {
-  const modal = $("#user-tasks-modal");
-  if (modal) modal.hidden = true;
+async function loadAssignableUsersForForm() {
+  const sel = $("#user-task-assignee");
+  if (!sel) return;
+  try {
+    const users = await apiClient.listAssignableUsers();
+    state.assignableUsers = users;
+    sel.innerHTML = "";
+    for (const u of users) {
+      const opt = el("option", { value: String(u.id) }, u.username);
+      if (state.user && u.id === state.user.id) opt.selected = true;
+      sel.appendChild(opt);
+    }
+  } catch (err) {
+    toast(err.message, "error");
+  }
 }
 
-function openUserTasksAdminModal(userId, username) {
-  const modal = $("#user-tasks-admin-modal");
-  if (!modal) return;
-  state.adminTasksUserId = userId;
-  state.adminTasksUsername = username;
-  const nameEl = $("#user-tasks-admin-username");
-  if (nameEl) nameEl.textContent = username;
-  modal.hidden = false;
-  refreshUserTasksAdminList();
+function canModifyTaskAttachments(task) {
+  if (!state.user) return false;
+  return state.user.id === task.user_id || state.user.id === task.assignee_id;
 }
 
-function closeUserTasksAdminModal() {
-  const modal = $("#user-tasks-admin-modal");
-  if (modal) modal.hidden = true;
-  state.adminTasksUserId = null;
-  state.adminTasksUsername = null;
+function canChangeAssignee(task) {
+  if (!state.user) return false;
+  if (state.user.role === "admin") return true;
+  return state.user.id === task.user_id || state.user.id === task.assignee_id;
 }
 
-function renderUserTaskRow(task, onRefresh) {
+async function renderUserTaskAttachments(task, container, onRefresh) {
+  container.innerHTML = "";
+  if (!canModifyTaskAttachments(task)) return;
+
+  const grid = el("div", { class: "user-task__attachment-grid" });
+  for (const att of task.attachments || []) {
+    const item = el("div", { class: "user-task__attachment-item" });
+    if (att.attachment_kind === "image") {
+      const img = el("img", {
+        class: "user-task__attachment-thumb lazy-thumb",
+        alt: att.original_filename,
+        loading: "lazy",
+      });
+      img.dataset.taskId = String(task.id);
+      img.dataset.attachmentId = String(att.id);
+      item.appendChild(img);
+      loadUserTaskAttachmentThumb(img, task.id, att.id);
+    } else {
+      item.appendChild(
+        el("div", { class: "user-task__attachment-pdf" }, att.original_filename || "PDF")
+      );
+    }
+    item.appendChild(
+      el(
+        "button",
+        {
+          type: "button",
+          class: "btn btn--ghost btn--sm user-task__attachment-remove",
+          title: "Remove attachment",
+          onclick: async () => {
+            const name = att.original_filename || "file";
+            if (!window.confirm(`Remove "${name}"?`)) return;
+            try {
+              await apiClient.deleteUserTaskAttachment(task.id, att.id);
+              await onRefresh();
+            } catch (err) {
+              toast(err.message, "error");
+            }
+          },
+        },
+        "×"
+      )
+    );
+    grid.appendChild(item);
+  }
+  container.appendChild(grid);
+
+  const upload = el("input", {
+    type: "file",
+    accept: "image/*,.pdf,application/pdf",
+    multiple: true,
+    class: "user-task__attachment-upload",
+    "aria-label": "Add attachments",
+  });
+  upload.addEventListener("change", async () => {
+    const files = Array.from(upload.files || []);
+    upload.value = "";
+    if (!files.length) return;
+    for (const file of files) {
+      try {
+        await apiClient.uploadUserTaskAttachment(task.id, file);
+      } catch (err) {
+        toast(err.message, "error");
+      }
+    }
+    await onRefresh();
+  });
+  container.appendChild(upload);
+}
+
+const userTaskThumbCache = new Map();
+
+async function loadUserTaskAttachmentThumb(img, taskId, attachmentId) {
+  const key = `${taskId}:${attachmentId}`;
+  if (userTaskThumbCache.has(key)) {
+    img.src = userTaskThumbCache.get(key);
+    return;
+  }
+  try {
+    const url = await apiClient.fetchUserTaskAttachmentThumbUrl(taskId, attachmentId);
+    userTaskThumbCache.set(key, url);
+    img.src = url;
+  } catch {
+    img.alt = "Thumbnail unavailable";
+  }
+}
+
+function renderUserTaskRow(task, onRefresh, options = {}) {
+  const { showReorder = false, showAssignee = false, showCreator = false } = options;
   const titleInput = el("input", {
     type: "text",
     class: "user-task__title-input",
@@ -5684,6 +5973,7 @@ function renderUserTaskRow(task, onRefresh) {
     try {
       await apiClient.updateUserTask(task.id, { title, note });
       await onRefresh();
+      await refreshNotificationCounts();
     } catch (err) {
       toast(err.message, "error");
     }
@@ -5702,76 +5992,121 @@ function renderUserTaskRow(task, onRefresh) {
     try {
       await apiClient.updateUserTask(task.id, { completed: check.checked });
       await onRefresh();
+      await refreshNotificationCounts();
     } catch (err) {
       toast(err.message, "error");
       check.checked = task.completed;
     }
   });
 
-  const row = el("div", {
+  const bodyChildren = [titleInput, noteTa];
+
+  if (showCreator && task.creator_username && task.user_id !== state.user?.id) {
+    bodyChildren.push(
+      el("div", { class: "user-task__meta" }, `Created by ${task.creator_username}`)
+    );
+  }
+  if (showAssignee && task.assignee_username) {
+    bodyChildren.push(
+      el("div", { class: "user-task__meta" }, `Assigned to ${task.assignee_username}`)
+    );
+  }
+
+  if (showAssignee && canChangeAssignee(task)) {
+    const assigneeSel = el("select", {
+      class: "user-task__assignee-select",
+      "aria-label": "Assignee",
+    });
+    for (const u of state.assignableUsers || []) {
+      const opt = el("option", { value: String(u.id) }, u.username);
+      if (u.id === task.assignee_id) opt.selected = true;
+      assigneeSel.appendChild(opt);
+    }
+    assigneeSel.addEventListener("change", async () => {
+      const assigneeId = Number(assigneeSel.value);
+      if (!assigneeId || assigneeId === task.assignee_id) return;
+      try {
+        const updated = await apiClient.updateUserTask(task.id, { assignee_id: assigneeId });
+        if (
+          state.user &&
+          assigneeId === state.user.id &&
+          updated.user_id !== state.user.id
+        ) {
+          maybePromptPushOnAssignment();
+        }
+        await onRefresh();
+        await refreshNotificationCounts();
+      } catch (err) {
+        toast(err.message, "error");
+        assigneeSel.value = String(task.assignee_id);
+      }
+    });
+    bodyChildren.push(assigneeSel);
+  }
+
+  const attachmentsWrap = el("div", { class: "user-task__attachments" });
+  renderUserTaskAttachments(task, attachmentsWrap, onRefresh);
+
+  bodyChildren.push(attachmentsWrap);
+
+  const actions = [];
+  if (showReorder) {
+    actions.push(
+      el("button", {
+        type: "button",
+        class: "btn btn--ghost btn--sm",
+        title: "Move up",
+        onclick: async () => {
+          try {
+            await apiClient.moveUserTask(task.id, "up");
+            await onRefresh();
+          } catch (err) {
+            toast(err.message, "error");
+          }
+        },
+      }, "↑"),
+      el("button", {
+        type: "button",
+        class: "btn btn--ghost btn--sm",
+        title: "Move down",
+        onclick: async () => {
+          try {
+            await apiClient.moveUserTask(task.id, "down");
+            await onRefresh();
+          } catch (err) {
+            toast(err.message, "error");
+          }
+        },
+      }, "↓")
+    );
+  }
+  actions.push(
+    el("button", {
+      type: "button",
+      class: "btn btn--ghost btn--sm user-task__delete",
+      onclick: async () => {
+        if (!window.confirm("Delete this task?")) return;
+        try {
+          await apiClient.deleteUserTask(task.id);
+          await onRefresh();
+          await refreshUserTasksCreatedList();
+          await refreshNotificationCounts();
+        } catch (err) {
+          toast(err.message, "error");
+        }
+      },
+    }, "Delete")
+  );
+
+  bodyChildren.push(el("div", { class: "user-task__actions" }, actions));
+
+  return el("div", {
     class: "user-task",
     dataset: { completed: task.completed ? "1" : "0" },
   }, [
     check,
-    el("div", { class: "user-task__body" }, [
-      titleInput,
-      noteTa,
-      el("div", { class: "user-task__actions" }, [
-        el(
-          "button",
-          {
-            type: "button",
-            class: "btn btn--ghost btn--sm",
-            title: "Move up",
-            onclick: async () => {
-              try {
-                await apiClient.moveUserTask(task.id, "up");
-                await onRefresh();
-              } catch (err) {
-                toast(err.message, "error");
-              }
-            },
-          },
-          "↑"
-        ),
-        el(
-          "button",
-          {
-            type: "button",
-            class: "btn btn--ghost btn--sm",
-            title: "Move down",
-            onclick: async () => {
-              try {
-                await apiClient.moveUserTask(task.id, "down");
-                await onRefresh();
-              } catch (err) {
-                toast(err.message, "error");
-              }
-            },
-          },
-          "↓"
-        ),
-        el(
-          "button",
-          {
-            type: "button",
-            class: "btn btn--ghost btn--sm user-task__delete",
-            onclick: async () => {
-              if (!window.confirm("Delete this task?")) return;
-              try {
-                await apiClient.deleteUserTask(task.id);
-                await onRefresh();
-              } catch (err) {
-                toast(err.message, "error");
-              }
-            },
-          },
-          "Delete"
-        ),
-      ]),
-    ]),
+    el("div", { class: "user-task__body" }, bodyChildren),
   ]);
-  return row;
 }
 
 async function refreshUserTasksMineList() {
@@ -5783,11 +6118,76 @@ async function refreshUserTasksMineList() {
     poller.channels.userTasksMine.lastSig = userTasksSignature(items);
     wrap.innerHTML = "";
     if (!items.length) {
-      wrap.appendChild(el("p", { class: "user-tasks-empty" }, "No tasks yet."));
+      wrap.appendChild(el("p", { class: "user-tasks-empty" }, "No tasks assigned to you."));
       return;
     }
     for (const task of items) {
-      wrap.appendChild(renderUserTaskRow(task, refreshUserTasksMineList));
+      wrap.appendChild(
+        renderUserTaskRow(task, async () => {
+          await refreshUserTasksMineList();
+          await refreshUserTasksCreatedList();
+        }, { showReorder: true, showCreator: true })
+      );
+    }
+  } catch (err) {
+    wrap.textContent = "";
+    wrap.appendChild(el("p", { class: "users-error" }, `Failed to load: ${err.message}`));
+  }
+}
+
+async function refreshCreatorTaskNotificationsList() {
+  const wrap = $("#user-task-notifications-list");
+  if (!wrap) return;
+  try {
+    const items = (await apiClient.listMyTaskNotifications()).filter((n) => !n.read);
+    wrap.innerHTML = "";
+    if (!items.length) return;
+    for (const item of items) {
+      wrap.appendChild(
+        el("div", { class: "user-task-notification" }, [
+          el("div", {}, [
+            el("strong", {}, item.title),
+            el("div", {}, item.message),
+          ]),
+          el("button", {
+            type: "button",
+            class: "btn btn--ghost btn--sm",
+            onclick: async () => {
+              try {
+                await apiClient.markTaskNotificationRead(item.id);
+                await refreshCreatorTaskNotificationsList();
+                await refreshNotificationCounts();
+              } catch (err) {
+                toast(err.message, "error");
+              }
+            },
+          }, "Dismiss"),
+        ])
+      );
+    }
+  } catch {
+    wrap.innerHTML = "";
+  }
+}
+
+async function refreshUserTasksCreatedList() {
+  const wrap = $("#user-tasks-created-list");
+  if (!wrap) return;
+  wrap.textContent = "Loading…";
+  try {
+    const items = await apiClient.listCreatedUserTasks();
+    wrap.innerHTML = "";
+    if (!items.length) {
+      wrap.appendChild(el("p", { class: "user-tasks-empty" }, "No tasks created yet."));
+      return;
+    }
+    for (const task of items) {
+      wrap.appendChild(
+        renderUserTaskRow(task, async () => {
+          await refreshUserTasksMineList();
+          await refreshUserTasksCreatedList();
+        }, { showAssignee: true })
+      );
     }
   } catch (err) {
     wrap.textContent = "";
@@ -5809,12 +6209,41 @@ async function refreshUserTasksAdminList() {
       return;
     }
     for (const task of items) {
-      wrap.appendChild(renderUserTaskRow(task, refreshUserTasksAdminList));
+      wrap.appendChild(
+        renderUserTaskRow(task, refreshUserTasksAdminList, {
+          showReorder: true,
+          showCreator: true,
+        })
+      );
     }
   } catch (err) {
     wrap.textContent = "";
     wrap.appendChild(el("p", { class: "users-error" }, `Failed to load: ${err.message}`));
   }
+}
+
+function closeUserTasksModal() {
+  const modal = $("#user-tasks-modal");
+  if (modal) modal.hidden = true;
+}
+
+function openUserTasksAdminModal(userId, username) {
+  const modal = $("#user-tasks-admin-modal");
+  if (!modal) return;
+  state.adminTasksUserId = userId;
+  state.adminTasksUsername = username;
+  const nameEl = $("#user-tasks-admin-username");
+  if (nameEl) nameEl.textContent = username;
+  modal.hidden = false;
+  loadAssignableUsersForForm();
+  refreshUserTasksAdminList();
+}
+
+function closeUserTasksAdminModal() {
+  const modal = $("#user-tasks-admin-modal");
+  if (modal) modal.hidden = true;
+  state.adminTasksUserId = null;
+  state.adminTasksUsername = null;
 }
 
 function openNotificationsModal() {
@@ -5915,6 +6344,7 @@ function renderNotificationItem(item) {
               try {
                 await apiClient.updateNotification(item.id, { billed: !item.billed });
                 await refreshNotificationsModal();
+                await refreshNotificationCounts();
                 toast(item.billed ? "Marked unbilled" : "Marked billed", "success");
               } catch (err) {
                 toast(`Failed to update notification: ${err.message}`, "error");
@@ -6416,6 +6846,9 @@ function wireShell() {
     "user-tasks": async () => {
       openUserTasksModal();
     },
+    "push-toggle": async () => {
+      await togglePushNotifications();
+    },
     "new-job": async () => {
       openModal();
     },
@@ -6497,7 +6930,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         wireShell();
         await loadJobs();
         await refreshContactsCatalog();
-        await refreshNotificationBadgeCount();
+        await refreshNotificationCounts();
         startAppPolling();
         toast(`Signed in as ${state.user.username}`, "success");
       } catch (err) {
@@ -6528,7 +6961,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     wireShell();
     await loadJobs();
     await refreshContactsCatalog();
-    await refreshNotificationBadgeCount();
+    await refreshNotificationCounts();
     startAppPolling();
   }
 

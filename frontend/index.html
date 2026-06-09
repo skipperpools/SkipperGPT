@@ -51,12 +51,16 @@
           <div class="topbar__user-menu">
             <button id="user-menu-btn" class="topbar__user-btn" type="button" aria-haspopup="menu" aria-expanded="false">
               <span id="user-menu-label">Account</span>
-              <span id="user-menu-badge" class="topbar__user-badge" hidden>0</span>
+              <span id="user-menu-badges" class="topbar__user-badges">
+                <span id="user-menu-badge-billing" class="topbar__user-badge topbar__user-badge--billing" hidden aria-label="Billing notifications">0</span>
+                <span id="user-menu-badge-tasks" class="topbar__user-badge" hidden aria-label="Task notifications">0</span>
+              </span>
             </button>
             <div id="user-menu" class="topbar__menu" role="menu" hidden>
               <button id="menu-new-job-btn" class="topbar__menu-item" type="button" role="menuitem" data-menu-action="new-job">+ New Job</button>
               <button id="menu-feedback-btn" class="topbar__menu-item" type="button" role="menuitem" data-menu-action="feedback">Requests</button>
               <button id="menu-user-tasks-btn" class="topbar__menu-item" type="button" role="menuitem" data-menu-action="user-tasks">My tasks</button>
+              <button id="menu-push-toggle-btn" class="topbar__menu-item" type="button" role="menuitem" data-menu-action="push-toggle">Push notifications: Off</button>
               <button id="menu-notifications-btn" class="topbar__menu-item" type="button" role="menuitem" data-menu-action="notifications" hidden>
                 Billing notifications
               </button>
@@ -389,11 +393,20 @@
                 <input id="user-task-title" name="title" type="text" required maxlength="255" placeholder="What needs to be done?" />
               </label>
               <label class="field">
+                <span>Assign to</span>
+                <select id="user-task-assignee" name="assignee_id" aria-label="Assign to"></select>
+              </label>
+              <label class="field">
                 <span>Note (optional)</span>
                 <textarea id="user-task-note" name="note" rows="2" maxlength="8000" placeholder="Optional details…"></textarea>
               </label>
             </form>
+            <h3 class="user-tasks-section-title">My tasks</h3>
+            <p class="user-tasks-section-hint">Assigned to you</p>
             <div id="user-tasks-mine-list" class="user-tasklist"></div>
+            <h3 class="user-tasks-section-title user-tasks-section-title--created">Tasks I've created</h3>
+            <div id="user-task-notifications-list" class="user-task-notifications-list"></div>
+            <div id="user-tasks-created-list" class="user-tasklist user-tasklist--created"></div>
           </div>
           <footer class="modal__footer">
             <button type="button" class="btn btn--ghost" data-close="1">Close</button>
