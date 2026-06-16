@@ -1864,7 +1864,7 @@ button.overview-row:last-child {
   padding: 16px;
 }
 .custom-task-dialog__inner {
-  background: var(--surface);
+  background: var(--bg-elev);
   border: 1px solid var(--border);
   border-radius: 12px;
   padding: 24px;
