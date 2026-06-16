@@ -1487,6 +1487,8 @@ function userTasksSignature(items) {
       t.completed,
       t.note,
       t.sort_order,
+      t.is_pinned,
+      t.category,
       t.assignee_id,
       t.user_id,
       (t.attachments ?? []).length,
@@ -5433,19 +5435,22 @@ function wireModal() {
     const noteRaw = String($("#user-task-note")?.value ?? "").trim();
     const assigneeRaw = $("#user-task-assignee")?.value;
     const assigneeId = assigneeRaw ? Number(assigneeRaw) : null;
+    const category = String($("#user-task-category")?.value ?? "general").trim() || "general";
     if (!title) {
       toast("Title is required", "error");
       return;
     }
     try {
-      const payload = { title, note: noteRaw || null };
+      const payload = { title, note: noteRaw || null, category };
       if (assigneeId) payload.assignee_id = assigneeId;
       const created = await apiClient.createUserTask(payload);
       toast("Task added", "success");
       const titleEl = $("#user-task-title");
       const noteEl = $("#user-task-note");
+      const categoryEl = $("#user-task-category");
       if (titleEl) titleEl.value = "";
       if (noteEl) noteEl.value = "";
+      if (categoryEl) categoryEl.value = "general";
       if (
         state.user &&
         created.assignee_id === state.user.id &&
@@ -6075,7 +6080,33 @@ function renderUserTaskRow(task, onRefresh, options = {}) {
     }
   });
 
-  const bodyChildren = [titleInput, noteTa];
+  const categorySel = el("select", {
+    class: "user-task__category-select",
+    "aria-label": "Category",
+  });
+  for (const [value, label] of [
+    ["general", "General"],
+    ["sales", "Sales"],
+    ["construction", "Construction"],
+    ["warranty", "Warranty"],
+  ]) {
+    const opt = el("option", { value }, label);
+    if ((task.category || "general") === value) opt.selected = true;
+    categorySel.appendChild(opt);
+  }
+  categorySel.addEventListener("change", async () => {
+    const category = categorySel.value;
+    if (category === (task.category || "general")) return;
+    try {
+      await apiClient.updateUserTask(task.id, { category });
+      await onRefresh();
+    } catch (err) {
+      toast(err.message, "error");
+      categorySel.value = task.category || "general";
+    }
+  });
+
+  const bodyChildren = [titleInput, categorySel, noteTa];
 
   if (showCreator && task.creator_username && task.user_id !== state.user?.id) {
     bodyChildren.push(
@@ -6126,6 +6157,22 @@ function renderUserTaskRow(task, onRefresh, options = {}) {
   bodyChildren.push(attachmentsWrap);
 
   const actions = [];
+  actions.push(
+    el("button", {
+      type: "button",
+      class: task.is_pinned ? "btn btn--ghost btn--sm user-task__pin user-task__pin--active" : "btn btn--ghost btn--sm user-task__pin",
+      title: task.is_pinned ? "Unpin task" : "Pin task to top",
+      "aria-label": task.is_pinned ? "Unpin task" : "Pin task to top",
+      onclick: async () => {
+        try {
+          await apiClient.updateUserTask(task.id, { is_pinned: !task.is_pinned });
+          await onRefresh();
+        } catch (err) {
+          toast(err.message, "error");
+        }
+      },
+    }, task.is_pinned ? "📌 Pinned" : "📌 Pin")
+  );
   if (showReorder) {
     actions.push(
       el("button", {
@@ -6177,8 +6224,12 @@ function renderUserTaskRow(task, onRefresh, options = {}) {
   bodyChildren.push(el("div", { class: "user-task__actions" }, actions));
 
   return el("div", {
-    class: "user-task",
-    dataset: { completed: task.completed ? "1" : "0" },
+    class: task.is_pinned ? "user-task user-task--pinned" : "user-task",
+    dataset: {
+      completed: task.completed ? "1" : "0",
+      pinned: task.is_pinned ? "1" : "0",
+      category: task.category || "general",
+    },
   }, [
     check,
     el("div", { class: "user-task__body" }, bodyChildren),

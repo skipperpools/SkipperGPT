@@ -19,7 +19,7 @@ def list_for_assignee(db: Session, assignee_id: int) -> List[UserTask]:
         select(UserTask)
         .options(selectinload(UserTask.attachments))
         .where(UserTask.assignee_id == assignee_id)
-        .order_by(UserTask.sort_order.asc(), UserTask.id.asc())
+        .order_by(UserTask.is_pinned.desc(), UserTask.sort_order.asc(), UserTask.id.asc())
     )
     return list(db.execute(stmt).scalars().all())
 
@@ -50,7 +50,12 @@ def list_all_with_usernames(
         .join(Creator, UserTask.user_id == Creator.id)
         .join(Assignee, UserTask.assignee_id == Assignee.id)
         .options(selectinload(UserTask.attachments))
-        .order_by(Assignee.username.asc(), UserTask.sort_order.asc(), UserTask.id.asc())
+        .order_by(
+            Assignee.username.asc(),
+            UserTask.is_pinned.desc(),
+            UserTask.sort_order.asc(),
+            UserTask.id.asc(),
+        )
     )
     if assignee_id is not None:
         stmt = stmt.where(UserTask.assignee_id == assignee_id)
@@ -93,6 +98,7 @@ def create_task(
     assignee_id: int,
     title: str,
     note: Optional[str] = None,
+    category: str = "general",
 ) -> UserTask:
     task = UserTask(
         user_id=creator_id,
@@ -100,6 +106,7 @@ def create_task(
         title=title.strip(),
         note=note.strip() if note else None,
         sort_order=_next_sort_order(db, assignee_id),
+        category=category,
     )
     db.add(task)
     db.commit()

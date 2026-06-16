@@ -2780,6 +2780,58 @@ body.photo-viewer-open {
   text-decoration: line-through;
   color: var(--text-muted);
 }
+.user-task--pinned,
+.user-task[data-pinned="1"] {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg-soft));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+.user-task__category-select {
+  max-width: 100%;
+  margin-top: 0.35rem;
+  font-size: 0.8rem;
+}
+.user-task {
+  border-left: 4px solid transparent;
+}
+.user-task[data-category="general"] {
+  border-left-color: var(--border-strong);
+}
+.user-task[data-category="sales"] {
+  border-left-color: var(--section-notes-title);
+  background: color-mix(in srgb, var(--section-notes-title) 5%, var(--bg-soft));
+}
+.user-task[data-category="construction"] {
+  border-left-color: var(--status-in-progress);
+  background: color-mix(in srgb, var(--status-in-progress) 5%, var(--bg-soft));
+}
+.user-task[data-category="warranty"] {
+  border-left-color: var(--status-issue);
+  background: color-mix(in srgb, var(--status-issue) 5%, var(--bg-soft));
+}
+.user-task--pinned[data-category="sales"],
+.user-task[data-pinned="1"][data-category="sales"] {
+  background: color-mix(in srgb, var(--section-notes-title) 6%, color-mix(in srgb, var(--accent) 8%, var(--bg-soft)));
+}
+.user-task--pinned[data-category="construction"],
+.user-task[data-pinned="1"][data-category="construction"] {
+  background: color-mix(in srgb, var(--status-in-progress) 6%, color-mix(in srgb, var(--accent) 8%, var(--bg-soft)));
+}
+.user-task--pinned[data-category="warranty"],
+.user-task[data-pinned="1"][data-category="warranty"] {
+  background: color-mix(in srgb, var(--status-issue) 6%, color-mix(in srgb, var(--accent) 8%, var(--bg-soft)));
+}
+.user-task__pin {
+  white-space: nowrap;
+}
+.user-task__pin--active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+.user-task__pin--active:hover {
+  background: #178fa9;
+}
 .user-task__check {
   width: 22px;
   height: 22px;

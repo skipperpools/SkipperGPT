@@ -10,6 +10,7 @@ from .auth_utils import assert_password_within_bcrypt_limit
 from .constants import (
     JOB_TYPE_NEW_CONSTRUCTION,
     MAX_JOB_CONTACTS,
+    USER_TASK_CATEGORY_GENERAL,
     USER_TASK_NOTE_MAX,
     USER_TASK_TITLE_MAX,
     VALID_JOB_TYPES,
@@ -18,6 +19,7 @@ from .constants import (
     VALID_FEEDBACK_STATUS,
     VALID_ROLES,
     VALID_STATUSES,
+    VALID_USER_TASK_CATEGORIES,
 )
 
 
@@ -501,6 +503,8 @@ class UserTaskRead(BaseModel):
     completed: bool
     note: Optional[str] = None
     sort_order: int
+    is_pinned: bool = False
+    category: str = USER_TASK_CATEGORY_GENERAL
     completed_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
@@ -526,6 +530,15 @@ class UserTaskCreate(BaseModel):
     title: str = Field(..., min_length=1, max_length=USER_TASK_TITLE_MAX)
     note: Optional[str] = Field(None, max_length=USER_TASK_NOTE_MAX)
     assignee_id: Optional[int] = None
+    category: str = USER_TASK_CATEGORY_GENERAL
+
+    @field_validator("category")
+    @classmethod
+    def _validate_category(cls, v: str) -> str:
+        vv = (v or "").strip().lower()
+        if vv not in VALID_USER_TASK_CATEGORIES:
+            raise ValueError(f"category must be one of {sorted(VALID_USER_TASK_CATEGORIES)}")
+        return vv
 
 
 class UserTaskUpdate(BaseModel):
@@ -533,6 +546,18 @@ class UserTaskUpdate(BaseModel):
     note: Optional[str] = Field(None, max_length=USER_TASK_NOTE_MAX)
     completed: Optional[bool] = None
     assignee_id: Optional[int] = None
+    is_pinned: Optional[bool] = None
+    category: Optional[str] = None
+
+    @field_validator("category")
+    @classmethod
+    def _validate_category(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        vv = v.strip().lower()
+        if vv not in VALID_USER_TASK_CATEGORIES:
+            raise ValueError(f"category must be one of {sorted(VALID_USER_TASK_CATEGORIES)}")
+        return vv
 
 
 class UserTaskMove(BaseModel):

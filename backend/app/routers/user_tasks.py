@@ -59,6 +59,8 @@ def _to_read(
         completed=item.completed,
         note=item.note,
         sort_order=item.sort_order,
+        is_pinned=item.is_pinned,
+        category=item.category,
         completed_at=item.completed_at,
         created_at=item.created_at,
         updated_at=item.updated_at,
@@ -144,6 +146,7 @@ def create_user_task_route(
         assignee_id=assignee.id,
         title=payload.title,
         note=payload.note,
+        category=payload.category,
     )
     if assignee.id != current.id:
         user_task_events.notify_assignee_assigned(

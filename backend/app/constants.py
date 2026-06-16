@@ -131,6 +131,19 @@ VALID_USER_TASK_NOTIFICATION_EVENTS = frozenset({
     USER_TASK_NOTIFICATION_EVENT_REASSIGNED,
 })
 
+USER_TASK_CATEGORY_GENERAL = "general"
+USER_TASK_CATEGORY_SALES = "sales"
+USER_TASK_CATEGORY_CONSTRUCTION = "construction"
+USER_TASK_CATEGORY_WARRANTY = "warranty"
+VALID_USER_TASK_CATEGORIES = frozenset(
+    {
+        USER_TASK_CATEGORY_GENERAL,
+        USER_TASK_CATEGORY_SALES,
+        USER_TASK_CATEGORY_CONSTRUCTION,
+        USER_TASK_CATEGORY_WARRANTY,
+    }
+)
+
 # Task numbers are 1-based in user language. This set maps the requested
 # billing notification steps (4, 9, 17, 24, 31) to task keys.
 BILLING_NOTIFICATION_TASK_KEYS = frozenset(

@@ -260,6 +260,32 @@ def _ensure_user_task_assignee_column() -> None:
         conn.execute(text("UPDATE user_tasks SET assignee_id = user_id WHERE assignee_id IS NULL"))
 
 
+def _ensure_user_task_is_pinned_column() -> None:
+    """Add user_tasks.is_pinned if missing (existing DBs)."""
+    dialect = engine.dialect.name
+    with engine.begin() as conn:
+        cols = _user_tasks_column_names(conn, dialect)
+        if "is_pinned" not in cols:
+            conn.execute(
+                text("ALTER TABLE user_tasks ADD COLUMN is_pinned BOOLEAN NOT NULL DEFAULT 0")
+            )
+            logger.info("Added column user_tasks.is_pinned")
+
+
+def _ensure_user_task_category_column() -> None:
+    """Add user_tasks.category if missing (existing DBs)."""
+    dialect = engine.dialect.name
+    with engine.begin() as conn:
+        cols = _user_tasks_column_names(conn, dialect)
+        if "category" not in cols:
+            conn.execute(
+                text(
+                    "ALTER TABLE user_tasks ADD COLUMN category VARCHAR(32) NOT NULL DEFAULT 'general'"
+                )
+            )
+            logger.info("Added column user_tasks.category")
+
+
 def _ensure_user_push_enabled_column() -> None:
     dialect = engine.dialect.name
     with engine.begin() as conn:
@@ -371,6 +397,8 @@ def _on_startup() -> None:
     _migrate_legacy_contacts_and_drop_column()
     _ensure_notification_billed_columns()
     _ensure_user_task_assignee_column()
+    _ensure_user_task_is_pinned_column()
+    _ensure_user_task_category_column()
     _ensure_user_push_enabled_column()
     _ensure_new_user_task_tables()
     _ensure_job_document_category_column()
