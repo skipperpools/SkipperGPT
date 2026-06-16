@@ -106,7 +106,7 @@ class UserTasksTests(unittest.TestCase):
         mine_b = self.client.get("/api/user-tasks/mine")
         self.assertEqual([t["title"] for t in mine_b.json()], ["For B"])
 
-    def test_created_lists_creator_tasks(self) -> None:
+    def test_created_lists_delegated_tasks_only(self) -> None:
         self._create_task_as(self.user_a, "Self task")
         self._create_task_as(self.user_a, "Delegated", assignee_id=self.user_b.id)
 
@@ -114,7 +114,7 @@ class UserTasksTests(unittest.TestCase):
         created = self.client.get("/api/user-tasks/created")
         self.assertEqual(created.status_code, 200, created.text)
         titles = [t["title"] for t in created.json()]
-        self.assertEqual(set(titles), {"Self task", "Delegated"})
+        self.assertEqual(titles, ["Delegated"])
 
     def test_assignee_can_complete_task(self) -> None:
         created = self._create_task_as(self.user_a, "For B", assignee_id=self.user_b.id)

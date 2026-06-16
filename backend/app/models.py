@@ -229,6 +229,9 @@ class JobTask(Base):
     completed_by: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    is_billable: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="0"
+    )
 
     job: Mapped[Job] = relationship(back_populates="tasks")
 

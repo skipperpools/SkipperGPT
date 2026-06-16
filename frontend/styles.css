@@ -1837,6 +1837,79 @@ button.overview-row:last-child {
 }
 .task[data-status="completed"] .task__label { text-decoration: line-through; color: var(--text-muted); }
 
+.task__billable-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #fff;
+  background: var(--accent, #2563eb);
+  border-radius: 4px;
+  padding: 1px 6px;
+  line-height: 1.6;
+  flex-shrink: 0;
+}
+
+/* ---------- Custom Task Dialog ---------- */
+.custom-task-dialog {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+.custom-task-dialog__inner {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 24px;
+  width: 100%;
+  max-width: 380px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.18);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.custom-task-dialog__title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--text);
+}
+.custom-task-dialog__field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.custom-task-dialog__field--inline {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+.custom-task-dialog__label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.custom-task-dialog__billable-check {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent, #2563eb);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.custom-task-dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+
 .task__issue-btn {
   background: transparent;
   border: 1px solid var(--border-strong);

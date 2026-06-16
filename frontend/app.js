@@ -2978,6 +2978,87 @@ function attachTasklistDragDrop(tasklistEl, jobId) {
   });
 }
 
+function showCustomTaskDialog(job) {
+  // Remove any existing dialog first
+  $("#custom-task-dialog")?.remove();
+
+  const labelInput = el("input", {
+    type: "text",
+    id: "custom-task-label",
+    class: "form-input",
+    placeholder: "Task label",
+    maxlength: "128",
+    autocomplete: "off",
+  });
+
+  const billableCheckbox = el("input", {
+    type: "checkbox",
+    id: "custom-task-billable",
+    class: "custom-task-dialog__billable-check",
+  });
+
+  const dialog = el("div", { id: "custom-task-dialog", class: "custom-task-dialog", role: "dialog", "aria-modal": "true", "aria-label": "Add Custom Task" }, [
+    el("div", { class: "custom-task-dialog__inner" }, [
+      el("h3", { class: "custom-task-dialog__title" }, "Add Custom Task"),
+      el("div", { class: "custom-task-dialog__field" }, [
+        el("label", { for: "custom-task-label", class: "custom-task-dialog__label" }, "Task Label"),
+        labelInput,
+      ]),
+      el("div", { class: "custom-task-dialog__field custom-task-dialog__field--inline" }, [
+        billableCheckbox,
+        el("label", { for: "custom-task-billable", class: "custom-task-dialog__label" }, "Billable"),
+      ]),
+      el("div", { class: "custom-task-dialog__actions" }, [
+        el("button", {
+          type: "button",
+          class: "btn btn--ghost btn--sm",
+          onclick: () => dialog.remove(),
+        }, "Cancel"),
+        el("button", {
+          type: "button",
+          class: "btn btn--primary btn--sm",
+          onclick: async () => {
+            const taskLabel = labelInput.value.trim();
+            if (!taskLabel) {
+              labelInput.focus();
+              return;
+            }
+            const isBillable = billableCheckbox.checked;
+            dialog.remove();
+            try {
+              const updated = await apiClient.addCustomTask(job.id, {
+                task_label: taskLabel,
+                is_billable: isBillable,
+              });
+              replaceJob(updated);
+              toast("Custom task added", "success");
+            } catch (err) {
+              toast(`Failed to add custom task: ${err.message}`, "error");
+            }
+          },
+        }, "Add Task"),
+      ]),
+    ]),
+  ]);
+
+  // Close on backdrop click
+  dialog.addEventListener("click", (e) => {
+    if (e.target === dialog) dialog.remove();
+  });
+
+  // Submit on Enter key in label field
+  labelInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      dialog.querySelector(".btn--primary").click();
+    }
+    if (e.key === "Escape") dialog.remove();
+  });
+
+  document.body.appendChild(dialog);
+  labelInput.focus();
+}
+
 function renderBack(job) {
   const list = el("ul", { class: "tasklist" });
 
@@ -2996,18 +3077,9 @@ function renderBack(job) {
           {
             type: "button",
             class: "btn btn--ghost btn--sm",
-            onclick: async (e) => {
+            onclick: (e) => {
               e.stopPropagation();
-              const raw = prompt("Custom task label");
-              const taskLabel = String(raw || "").trim();
-              if (!taskLabel) return;
-              try {
-                const updated = await apiClient.addCustomTask(job.id, { task_label: taskLabel });
-                replaceJob(updated);
-                toast("Custom task added", "success");
-              } catch (err) {
-                toast(`Failed to add custom task: ${err.message}`, "error");
-              }
+              showCustomTaskDialog(job);
             },
           },
           "+ Custom Task"
@@ -3489,7 +3561,11 @@ function renderTaskRow(job, task, taskIndex, totalTasks) {
   const rowChildren = [
     checkbox,
     el("div", { class: "task__main" }, [
-      el("div", { class: "task__label" }, [el("span", {}, task.task_label), taskActions]),
+      el("div", { class: "task__label" }, [
+        el("span", {}, task.task_label),
+        task.is_billable ? el("span", { class: "task__billable-badge", title: "Billable" }, "Billable") : null,
+        taskActions,
+      ]),
       el("div", { class: "task__inputs" }, [dateWrap, noteInput]),
     ]),
   ];
@@ -6178,7 +6254,7 @@ async function refreshUserTasksCreatedList() {
     const items = await apiClient.listCreatedUserTasks();
     wrap.innerHTML = "";
     if (!items.length) {
-      wrap.appendChild(el("p", { class: "user-tasks-empty" }, "No tasks created yet."));
+      wrap.appendChild(el("p", { class: "user-tasks-empty" }, "No tasks assigned to others."));
       return;
     }
     for (const task of items) {

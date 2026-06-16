@@ -98,6 +98,21 @@ def _job_documents_column_names(conn, dialect: str) -> set[str]:
     return {row[0] for row in result}
 
 
+def _job_tasks_column_names(conn, dialect: str) -> set[str]:
+    """Columns present on table job_tasks (SQLite vs Postgres)."""
+    if dialect == "sqlite":
+        rows = conn.exec_driver_sql("PRAGMA table_info(job_tasks)").fetchall()
+        return {row[1] for row in rows}
+    result = conn.execute(
+        text(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_schema = current_schema() AND table_name = :t"
+        ),
+        {"t": "job_tasks"},
+    )
+    return {row[0] for row in result}
+
+
 def _ensure_pool_type_column() -> None:
     """Add pool_type if missing (existing DBs); migrate P/PS misfiled under permit_status."""
     dialect = engine.dialect.name
@@ -298,6 +313,18 @@ def _ensure_job_notes_table() -> None:
         logger.info("Created table job_notes")
 
 
+def _ensure_job_tasks_is_billable_column() -> None:
+    """Add job_tasks.is_billable if missing (existing DBs)."""
+    dialect = engine.dialect.name
+    with engine.begin() as conn:
+        cols = _job_tasks_column_names(conn, dialect)
+        if "is_billable" not in cols:
+            conn.execute(
+                text("ALTER TABLE job_tasks ADD COLUMN is_billable BOOLEAN NOT NULL DEFAULT 0")
+            )
+            logger.info("Added column job_tasks.is_billable")
+
+
 app = FastAPI(
     title="Skipper Pools - Job Card Dashboard",
     version="0.1.0",
@@ -347,6 +374,7 @@ def _on_startup() -> None:
     _ensure_user_push_enabled_column()
     _ensure_new_user_task_tables()
     _ensure_job_document_category_column()
+    _ensure_job_tasks_is_billable_column()
     logger.info(
         "Skipper dashboard ready | env=%s dialect=%s db=%s",
         settings.app_env,

@@ -25,10 +25,11 @@ def list_for_assignee(db: Session, assignee_id: int) -> List[UserTask]:
 
 
 def list_created_by(db: Session, creator_id: int) -> List[UserTask]:
+    """Tasks created by user and assigned to someone else (excludes self-assigned)."""
     stmt = (
         select(UserTask)
         .options(selectinload(UserTask.attachments))
-        .where(UserTask.user_id == creator_id)
+        .where(UserTask.user_id == creator_id, UserTask.assignee_id != UserTask.user_id)
         .order_by(UserTask.created_at.desc(), UserTask.id.desc())
     )
     return list(db.execute(stmt).scalars().all())

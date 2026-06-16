@@ -313,7 +313,9 @@ def update_task(
     return task
 
 
-def add_job_task(db: Session, *, job: Job, task_label: str) -> JobTask:
+def add_job_task(
+    db: Session, *, job: Job, task_label: str, is_billable: bool = False
+) -> JobTask:
     """Append a custom task to a job with a unique task_key."""
     existing_keys = {t.task_key for t in job.tasks}
     base_key = _slugify_task_key(task_label)
@@ -325,6 +327,7 @@ def add_job_task(db: Session, *, job: Job, task_label: str) -> JobTask:
         task_label=task_label.strip(),
         status=STATUS_NOT_STARTED,
         sort_order=next_sort,
+        is_billable=is_billable,
     )
     db.add(task)
     db.commit()

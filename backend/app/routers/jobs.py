@@ -330,7 +330,7 @@ def create_custom_task(
     job = jobs_repo.get_job(db, job_id)
     if job is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
-    jobs_repo.add_job_task(db, job=job, task_label=payload.task_label)
+    jobs_repo.add_job_task(db, job=job, task_label=payload.task_label, is_billable=payload.is_billable)
     jobs_repo.reload_job_tasks(db, job)
     return to_job_read(job)
 
@@ -462,7 +462,7 @@ def update_task(
         if (
             prev_status != STATUS_COMPLETED
             and new_status == STATUS_COMPLETED
-            and task.task_key in BILLING_NOTIFICATION_TASK_KEYS
+            and (task.task_key in BILLING_NOTIFICATION_TASK_KEYS or task.is_billable)
         ):
             notifications_repo.create_notification(
                 db,

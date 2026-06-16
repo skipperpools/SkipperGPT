@@ -33,6 +33,7 @@ class JobTaskRead(BaseModel):
     completed_by: Optional[str] = None
     note: Optional[str] = None
     sort_order: int
+    is_billable: bool = False
 
 
 class JobTaskUpdate(BaseModel):
@@ -57,6 +58,7 @@ class JobTaskUpdate(BaseModel):
 
 class JobTaskCreate(BaseModel):
     task_label: str = Field(..., min_length=1, max_length=128)
+    is_billable: bool = False
 
 
 class JobTaskMove(BaseModel):
