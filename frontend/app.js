@@ -33,6 +33,8 @@ const state = {
   /** Admin nested tasks modal: user whose list is being edited */
   adminTasksUserId: null,
   adminTasksUsername: null,
+  /** @type {"all" | "assigned" | "own"} filter applied to the "My tasks" list */
+  userTasksMineFilter: "all",
 };
 
 const POLL_BASE_INTERVAL_MS = 5000;
@@ -5465,6 +5467,17 @@ function wireModal() {
       toast(err.message, "error");
     }
   });
+  $("#user-tasks-mine-filter")?.addEventListener("click", async (e) => {
+    const btn = e.target.closest(".user-tasks-filter__btn");
+    if (!btn) return;
+    const value = btn.dataset.filter || "all";
+    if (value === state.userTasksMineFilter) return;
+    state.userTasksMineFilter = value;
+    for (const b of e.currentTarget.querySelectorAll(".user-tasks-filter__btn")) {
+      b.classList.toggle("is-active", b === btn);
+    }
+    await refreshUserTasksMineList();
+  });
   if (modal) {
     modal.addEventListener("click", (e) => {
       if (e.target.dataset.close === "1") closeModal();
@@ -6106,13 +6119,18 @@ function renderUserTaskRow(task, onRefresh, options = {}) {
     }
   });
 
-  const bodyChildren = [titleInput, categorySel, noteTa];
-
+  const titleRow = el("div", { class: "user-task__title-row" }, [titleInput]);
   if (showCreator && task.creator_username && task.user_id !== state.user?.id) {
-    bodyChildren.push(
-      el("div", { class: "user-task__meta" }, `Created by ${task.creator_username}`)
+    titleRow.appendChild(
+      el("span", {
+        class: "user-task__from-badge",
+        title: `Assigned by ${task.creator_username}`,
+      }, `From ${task.creator_username}`)
     );
   }
+
+  const bodyChildren = [titleRow, categorySel, noteTa];
+
   if (showAssignee && task.assignee_username) {
     bodyChildren.push(
       el("div", { class: "user-task__meta" }, `Assigned to ${task.assignee_username}`)
@@ -6236,6 +6254,16 @@ function renderUserTaskRow(task, onRefresh, options = {}) {
   ]);
 }
 
+function filterUserTasksMine(items) {
+  if (state.userTasksMineFilter === "assigned") {
+    return (items ?? []).filter((t) => t.user_id !== state.user?.id);
+  }
+  if (state.userTasksMineFilter === "own") {
+    return (items ?? []).filter((t) => t.user_id === state.user?.id);
+  }
+  return items ?? [];
+}
+
 async function refreshUserTasksMineList() {
   const wrap = $("#user-tasks-mine-list");
   if (!wrap) return;
@@ -6244,11 +6272,18 @@ async function refreshUserTasksMineList() {
     const items = await apiClient.listMyUserTasks();
     poller.channels.userTasksMine.lastSig = userTasksSignature(items);
     wrap.innerHTML = "";
-    if (!items.length) {
-      wrap.appendChild(el("p", { class: "user-tasks-empty" }, "No tasks assigned to you."));
+    const visible = filterUserTasksMine(items);
+    if (!visible.length) {
+      wrap.appendChild(
+        el(
+          "p",
+          { class: "user-tasks-empty" },
+          items.length ? "No tasks match this filter." : "No tasks assigned to you."
+        )
+      );
       return;
     }
-    for (const task of items) {
+    for (const task of visible) {
       wrap.appendChild(
         renderUserTaskRow(task, async () => {
           await refreshUserTasksMineList();

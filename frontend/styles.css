@@ -210,6 +210,34 @@ input, textarea, select { font-family: inherit; font-size: 1rem; }
   color: rgba(0, 0, 0, 0.55);
 }
 
+.user-tasks-filter {
+  display: flex;
+  gap: 6px;
+  margin: 0 0 0.65rem;
+  flex-wrap: wrap;
+}
+
+.user-tasks-filter__btn {
+  font-size: 0.78rem;
+  font-weight: 600;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-elev);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.user-tasks-filter__btn:hover {
+  border-color: var(--border-strong);
+}
+
+.user-tasks-filter__btn.is-active {
+  background: var(--brand);
+  border-color: var(--brand);
+  color: #fff;
+}
+
 .user-task__meta {
   font-size: 0.78rem;
   color: rgba(0, 0, 0, 0.55);
@@ -2844,6 +2872,30 @@ body.photo-viewer-open {
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+.user-task__title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.user-task__title-row .user-task__title-input {
+  flex: 1;
+  min-width: 0;
+}
+.user-task__from-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #fff;
+  background: var(--brand, #0b3d62);
+  border-radius: 4px;
+  padding: 3px 7px;
+  line-height: 1.4;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 .user-task__title-input {
   width: 100%;

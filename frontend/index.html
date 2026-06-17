@@ -412,6 +412,11 @@
             </form>
             <h3 class="user-tasks-section-title">My tasks</h3>
             <p class="user-tasks-section-hint">Assigned to you</p>
+            <div id="user-tasks-mine-filter" class="user-tasks-filter" role="group" aria-label="Filter my tasks">
+              <button type="button" class="user-tasks-filter__btn is-active" data-filter="all">All</button>
+              <button type="button" class="user-tasks-filter__btn" data-filter="assigned">Assigned to me</button>
+              <button type="button" class="user-tasks-filter__btn" data-filter="own">My own</button>
+            </div>
             <div id="user-tasks-mine-list" class="user-tasklist"></div>
             <h3 class="user-tasks-section-title user-tasks-section-title--created">Tasks I've created</h3>
             <p class="user-tasks-section-hint">Assigned to someone else</p>
