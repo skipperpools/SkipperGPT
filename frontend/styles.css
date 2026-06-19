@@ -740,7 +740,7 @@ button.overview-row:last-child {
 /* Status color strip on the card */
 .card[data-status="not_started"] .face { border-left-color: var(--status-not-started); }
 .card[data-status="in_progress"] .face { border-left-color: var(--status-in-progress); }
-.card[data-status="completed"]   .face { border-left-color: var(--status-completed); }
+.card[data-status="completed"]   .face { border-left-color: #d98c1f; }
 .card[data-status="issue"]       .face { border-left-color: var(--status-issue); }
 
 /* ---------- Card front ---------- */
@@ -749,7 +749,7 @@ button.overview-row:last-child {
 
 /* Job-type visual tints in dashboard card view. */
 .card[data-job-type="sales"] .face--front {
-  background: linear-gradient(180deg, #fff6e9 0%, #ffffff 42%);
+  background: linear-gradient(180deg, #e6f6ec 0%, #ffffff 42%);
 }
 .card[data-job-type="renovation"] .face--front {
   background: linear-gradient(180deg, #f5f0ff 0%, #ffffff 42%);
@@ -773,7 +773,7 @@ button.overview-row:last-child {
 }
 .card[data-status="not_started"] .card__status-badge { background: #e7eaee; color: var(--status-not-started); }
 .card[data-status="in_progress"] .card__status-badge { background: #dceeff; color: var(--status-in-progress); }
-.card[data-status="completed"]   .card__status-badge { background: #d8f1e3; color: var(--status-completed); }
+.card[data-status="completed"]   .card__status-badge { background: #fbe6c8; color: #d98c1f; }
 .card[data-status="issue"]       .card__status-badge { background: #fbdcdc; color: var(--status-issue); }
 .card__jobtype-badge {
   display: inline-flex;
@@ -985,7 +985,7 @@ button.overview-row:last-child {
   width: 0%;
   transition: width 0.4s ease;
 }
-.card[data-status="completed"] .progressbar__fill { background: var(--status-completed); }
+.card[data-status="completed"] .progressbar__fill { background: #d98c1f; }
 .card[data-status="issue"]     .progressbar__fill { background: var(--status-issue); }
 .card[data-status="not_started"] .progressbar__fill { background: var(--status-not-started); }
 
