@@ -1,8 +1,8 @@
 # Skipper Pools - Job Card Dashboard
 
-A lightweight, local-first internal dashboard for tracking pool builds as digital job folders. Each job is a flippable card that shows a progress snapshot on the front and the full master-schedule checklist on the back.
+A lightweight internal dashboard for tracking pool builds as digital job folders. Each job is a flippable card that shows a progress snapshot on the front and the full master-schedule checklist on the back.
 
-Runs on the office PC against a local SQLite database.
+**Production runs on a DigitalOcean droplet** (`dashboard.skipperpools.net`), backed by a DigitalOcean Managed PostgreSQL database (NYC1, VPC connection). The setup steps below for SQLite/`launch.bat`/ngrok are for local development only — the app is no longer run as production on an office PC.
 
 ---
 
@@ -19,7 +19,7 @@ Runs on the office PC against a local SQLite database.
 - Billing milestone notifications for office/admin when certain steps are marked complete; mark items **billed** from the notifications list.
 - User-submitted feedback (requests / bugs); admins can triage and reply with an admin note.
 - Search by customer, address, manager, or permit number.
-- SQLite-only runtime (local-first production mode).
+- Runs against PostgreSQL in production (DigitalOcean Managed Database); SQLite remains supported for local development only.
 
 ---
 
@@ -68,7 +68,7 @@ SkipperGPT/
     index.html
     styles.css
     app.js
-  data/                       # SQLite file lives here (gitignored)
+  data/                       # SQLite file lives here (gitignored); local dev only, not used in production
   .env.example
   launch.bat                  # Starts uvicorn; optional ngrok
   .gitignore
@@ -79,7 +79,9 @@ The frontend talks ONLY to `/api/*` routes. It never touches the database.
 
 ---
 
-## Setup (Windows office PC)
+## Local development setup (not used for production)
+
+Production runs on the DigitalOcean droplet against the Managed Postgres database — see [Cloud Deploy](#cloud-deploy) below. The steps in this section are only for running the app on a Windows PC for development/testing against a local SQLite database.
 
 Prerequisites: Python 3.12 recommended (for optional HEIC uploads), plus Python launcher (`py`).
 
@@ -210,7 +212,9 @@ When you create a job or load the job list or job detail in the app, the server 
 
 Each job in the API includes **`docs_rel_path`** and **`photos_rel_path`** (for example `Docs/Anderson_Residence` and `Photos/Anderson_Residence`) so you know exactly where to copy files relative to `DOCS_ROOT`.
 
-### Launching with ngrok (public URL)
+### Launching with ngrok (local dev only — not how production is exposed)
+
+ngrok was previously used to expose a local office-PC instance publicly. Production is now the DigitalOcean droplet at `dashboard.skipperpools.net` with real DNS/TLS, so ngrok is no longer part of the production path. The `launch.bat` ngrok option below still works for ad-hoc local testing if you need to share a dev instance temporarily.
 
 Double-click **`launch.bat`** in the project root and answer **`Y`** at the `Launch with ngrok (skipper.ngrok.app)? [y/N]:` prompt. The launcher starts the app and opens **`https://skipper.ngrok.app/`** via the permanent ngrok tunnel (`ngrok http 8000 --url=https://skipper.ngrok.app`). Press **Enter** or **`N`** to open the app locally only (`http://127.0.0.1:8000/`).
 
@@ -371,11 +375,19 @@ Job-level "Notes / issue" notes go on the `jobs.notes` field and render at the t
 
 ---
 
-## Cloud Deploy Notes (Paused)
+## Cloud Deploy
 
-Hosted Postgres/Supabase deployment work is intentionally paused while the app
-operates in local production mode (SQLite + ngrok). Existing migration helpers
-remain in the repository for future investigation.
+Production runs on a DigitalOcean droplet (`dashboard.skipperpools.net`), with a
+DigitalOcean Managed PostgreSQL database (NYC1 region, connected over the
+private VPC network — see `deploy/README.md` for the full runbook). The droplet
+runs the FastAPI app via systemd (`deploy/skipper.service`) behind nginx
+(`deploy/nginx-skipper.conf`), with TLS via certbot and auto-deploy on push to
+`master` via GitHub Actions.
+
+`Docs/`/`Photos/` file storage stays on the droplet's attached volume — only the
+database moved to managed Postgres. `backend/app/migrate_sqlite_to_postgres.py`
+is the one-time migration script used for the cutover and is kept around for
+reference (e.g. if you ever need to stand up a second environment).
 
 ---
 
@@ -385,8 +397,8 @@ remain in the repository for future investigation.
 
 | Variable | Default | Notes |
 | -------- | ------- | ----- |
-| `APP_ENV` | `local` | Tagged in `/api/health`; informational |
-| `DATABASE_URL` | `sqlite:///./data/skipper.db` | SQLite URL used by the app runtime |
+| `APP_ENV` | `local` | Tagged in `/api/health`; informational. Production droplet sets this to `production` |
+| `DATABASE_URL` | `sqlite:///./data/skipper.db` | SQLite default is for local dev only. Production uses a `postgresql+psycopg://...` URL pointed at the DigitalOcean Managed Database (VPC connection) |
 | `DOCS_ROOT` | project root | PDF/photo filesystem root (`Path`) |
 | `MAX_UPLOAD_MB` | `25` | Per-upload size limit |
 | `SCHEDULE_XLSX_PATH` | *(unset)* | Optional full path to `Schedules.xlsx` |
@@ -423,4 +435,5 @@ The schema already has `completed_by` on `job_tasks`, so richer attribution can 
 - **HEIC upload says processing is unavailable**: run the backend in a Python 3.12 venv and install optional deps: `pip install -r backend/requirements-heic.txt`.
 - **`/api/health` works but no jobs render**: run `python -m app.seed` once (after logging in if using the UI), or create a job from the UI.
 - **Reset the local DB**: stop the server, delete `data/skipper.db`, restart, run `create_admin` / `seed` as needed.
-- **`ERR_NGROK_3200` / “endpoint is offline” on `skipper.ngrok.app`**: the ngrok agent is not connected for that URL. Confirm the **`Skipper Pools ngrok`** window stays open (the launcher runs ngrok under `cmd /k` so errors are not lost) and shows no failure text, uvicorn is running on port 8000, and the tunnel command is `ngrok http 8000 --url=https://skipper.ngrok.app` (port before `--url`, full `https://` URL). See [ngrok: ERR_NGROK_3200](https://ngrok.com/docs/errors/err_ngrok_3200) and your [endpoints dashboard](https://dashboard.ngrok.com/endpoints).
+- **`ERR_NGROK_3200` / “endpoint is offline” on `skipper.ngrok.app`** (local dev only — production no longer uses ngrok): the ngrok agent is not connected for that URL. Confirm the **`Skipper Pools ngrok`** window stays open (the launcher runs ngrok under `cmd /k` so errors are not lost) and shows no failure text, uvicorn is running on port 8000, and the tunnel command is `ngrok http 8000 --url=https://skipper.ngrok.app` (port before `--url`, full `https://` URL). See [ngrok: ERR_NGROK_3200](https://ngrok.com/docs/errors/err_ngrok_3200) and your [endpoints dashboard](https://dashboard.ngrok.com/endpoints).
+- **Production app down**: check the droplet — `sudo systemctl status skipper`, `sudo journalctl -u skipper -n 100 --no-pager`, and confirm the DigitalOcean Managed Database cluster is healthy in the DO console.
