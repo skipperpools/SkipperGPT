@@ -4601,6 +4601,7 @@ function closePhotoViewer() {
   photoViewerState.jobId = null;
   photoViewerState.photoIndex = null;
   photoViewerGesture.maxTouchesInGesture = 0;
+  updatePhotoViewerNavControls();
 }
 
 function isPhotoViewerOpen() {
@@ -4608,8 +4609,24 @@ function isPhotoViewerOpen() {
   return o && !o.hidden;
 }
 
+function updatePhotoViewerNavControls() {
+  const prevBtn = $("#photo-viewer-prev-btn");
+  const nextBtn = $("#photo-viewer-next-btn");
+  if (!prevBtn || !nextBtn) return;
+
+  const job = getJobById(photoViewerState.jobId);
+  const photos = getJobPhotosOrdered(job);
+  const index = photoViewerState.photoIndex;
+  const hasMultiple = isPhotoViewerOpen() && photos.length > 1 && index != null;
+
+  prevBtn.hidden = !hasMultiple;
+  nextBtn.hidden = !hasMultiple;
+  prevBtn.disabled = !hasMultiple || index <= 0;
+  nextBtn.disabled = !hasMultiple || index >= photos.length - 1;
+}
+
 /** @param {-1|1} delta -1 = previous photo, +1 = next (after swipe left). */
-function navigatePhotoViewerBySwipe(delta) {
+function navigatePhotoViewer(delta) {
   if (!isPhotoViewerOpen() || photoViewerState.jobId == null || photoViewerState.photoIndex == null) return;
   const job = getJobById(photoViewerState.jobId);
   const photos = getJobPhotosOrdered(job);
@@ -4724,7 +4741,7 @@ function initPhotoViewerGesturesOnce() {
               Math.abs(dx) >= SWIPE_MIN_PX &&
               Math.abs(dx) >= Math.abs(dy) * SWIPE_DOMINANCE
             ) {
-              navigatePhotoViewerBySwipe(dx < 0 ? 1 : -1);
+              navigatePhotoViewer(dx < 0 ? 1 : -1);
             }
           }
         }
@@ -4807,6 +4824,7 @@ async function openPhotoViewer(job, index) {
   overlay.hidden = false;
   document.body.classList.add("photo-viewer-open");
   if (loading) loading.hidden = false;
+  updatePhotoViewerNavControls();
 
   resetPhotoViewerTransform();
 
@@ -5631,6 +5649,16 @@ function wireModal() {
     photoViewerOverlay.addEventListener("click", (e) => {
       if (e.target.closest("[data-photo-viewer-close]")) closePhotoViewer();
     });
+    $("#photo-viewer-prev-btn")?.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      navigatePhotoViewer(-1);
+    });
+    $("#photo-viewer-next-btn")?.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      navigatePhotoViewer(1);
+    });
     initPhotoViewerGesturesOnce();
   }
   document.addEventListener("keydown", (e) => {
@@ -5643,6 +5671,18 @@ function wireModal() {
       closePhotoViewer();
       e.preventDefault();
       return;
+    }
+    if (isPhotoViewerOpen()) {
+      if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        navigatePhotoViewer(-1);
+        return;
+      }
+      if (e.key === "ArrowRight") {
+        e.preventDefault();
+        navigatePhotoViewer(1);
+        return;
+      }
     }
     if (e.key === "Escape" && document.querySelector(".card.is-flipped.card--mobile-overlay, .card.is-flipped.card--desktop-overlay")) {
       closeActiveCardOverlay();

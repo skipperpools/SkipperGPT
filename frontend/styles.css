@@ -2519,6 +2519,50 @@ button.overview-row:last-child {
   color: #fff;
   border-color: rgba(255, 255, 255, 0.35);
 }
+.photo-viewer__nav {
+  position: absolute;
+  top: 50%;
+  z-index: 3;
+  width: 54px;
+  height: 54px;
+  border: 1px solid rgba(255, 255, 255, 0.42);
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.44);
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  font-size: 2.7rem;
+  line-height: 1;
+  cursor: pointer;
+  transform: translateY(-50%);
+  transition: background-color 0.15s ease, border-color 0.15s ease, opacity 0.15s ease;
+}
+.photo-viewer__nav:hover,
+.photo-viewer__nav:focus-visible {
+  background: rgba(11, 61, 98, 0.82);
+  border-color: rgba(255, 255, 255, 0.75);
+  outline: none;
+}
+.photo-viewer__nav:disabled {
+  opacity: 0.24;
+  cursor: default;
+}
+.photo-viewer__nav:disabled:hover,
+.photo-viewer__nav:disabled:focus-visible {
+  background: rgba(0, 0, 0, 0.44);
+  border-color: rgba(255, 255, 255, 0.42);
+}
+.photo-viewer__nav[hidden] {
+  display: none;
+}
+.photo-viewer__nav--prev {
+  left: max(16px, env(safe-area-inset-left));
+}
+.photo-viewer__nav--next {
+  right: max(16px, env(safe-area-inset-right));
+}
 .photo-viewer__stage {
   position: absolute;
   inset: 0;
@@ -2566,6 +2610,20 @@ button.overview-row:last-child {
 body.photo-viewer-open {
   overflow: hidden;
   touch-action: none;
+}
+
+@media (max-width: 560px) {
+  .photo-viewer__nav {
+    width: 44px;
+    height: 44px;
+    font-size: 2.2rem;
+  }
+  .photo-viewer__nav--prev {
+    left: max(8px, env(safe-area-inset-left));
+  }
+  .photo-viewer__nav--next {
+    right: max(8px, env(safe-area-inset-right));
+  }
 }
 
 @keyframes upload-spinner-spin {
