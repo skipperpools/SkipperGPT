@@ -44,7 +44,10 @@ class JobTaskUpdate(BaseModel):
     status: Optional[str] = None
     value: Optional[str] = None
     note: Optional[str] = None
-    completed_by: Optional[str] = None
+
+    # completed_by is intentionally NOT client-settable: the backend stamps it
+    # from the authenticated user when a task transitions to "completed" (see
+    # jobs_repo.update_task / routers/jobs.py update_task).
 
     @field_validator("status")
     @classmethod
@@ -581,6 +584,7 @@ class NotificationRead(BaseModel):
     message: str
     job_id: Optional[int] = None
     task_key: Optional[str] = None
+    completed_by: Optional[str] = None
     billed: bool
     billed_at: Optional[datetime] = None
     billed_by_user_id: Optional[int] = None

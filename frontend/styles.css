@@ -2045,6 +2045,13 @@ button.overview-row:last-child {
 }
 .task__date:focus, .task__note:focus, .task__date-cal:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 
+.task__completed-meta {
+  margin-top: 4px;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
 @media (max-width: 480px) {
   .task__inputs { grid-template-columns: 1fr; }
 }

@@ -22,6 +22,7 @@ def create_notification(
     message: str,
     job_id: Optional[int] = None,
     task_key: Optional[str] = None,
+    completed_by: Optional[str] = None,
 ) -> NotificationItem:
     item = NotificationItem(
         type=type,
@@ -29,6 +30,7 @@ def create_notification(
         message=message,
         job_id=job_id,
         task_key=task_key,
+        completed_by=completed_by,
     )
     db.add(item)
     db.commit()

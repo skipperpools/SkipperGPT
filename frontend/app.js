@@ -3562,6 +3562,15 @@ function renderTaskRow(job, task, taskIndex, totalTasks) {
     deleteBtn,
   ]);
 
+  const completedMeta =
+    isCompleted && task.completed_by
+      ? el(
+          "div",
+          { class: "task__completed-meta" },
+          `Completed by ${task.completed_by}${task.completed_at ? ` · ${fmtDate(task.completed_at)}` : ""}`
+        )
+      : null;
+
   const rowChildren = [
     checkbox,
     el("div", { class: "task__main" }, [
@@ -3571,6 +3580,7 @@ function renderTaskRow(job, task, taskIndex, totalTasks) {
         taskActions,
       ]),
       el("div", { class: "task__inputs" }, [dateWrap, noteInput]),
+      completedMeta,
     ]),
   ];
   if (dragHandle) rowChildren.unshift(dragHandle);
@@ -6525,6 +6535,7 @@ async function refreshNotificationsModal() {
 function renderNotificationItem(item) {
   const createdBits = [fmtDateTime(item.created_at)];
   if (item.task_key) createdBits.push(item.task_key);
+  if (item.completed_by) createdBits.push(`Completed by ${item.completed_by}`);
   const billedBits = [];
   if (item.billed_at) billedBits.push(`Billed ${fmtDateTime(item.billed_at)}`);
   if (item.billed_by_user_id != null) billedBits.push(`by user #${item.billed_by_user_id}`);

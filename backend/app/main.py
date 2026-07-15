@@ -220,6 +220,9 @@ def _ensure_notification_billed_columns() -> None:
         if "billed_by_user_id" not in cols:
             conn.execute(text("ALTER TABLE notification_items ADD COLUMN billed_by_user_id INTEGER"))
             logger.info("Added column notification_items.billed_by_user_id")
+        if "completed_by" not in cols:
+            conn.execute(text("ALTER TABLE notification_items ADD COLUMN completed_by VARCHAR(128)"))
+            logger.info("Added column notification_items.completed_by")
 
 
 def _user_tasks_column_names(conn, dialect: str) -> set[str]:

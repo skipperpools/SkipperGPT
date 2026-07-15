@@ -533,6 +533,9 @@ class NotificationItem(Base):
         index=True,
     )
     task_key: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    # Username snapshot of who marked the linked job task as completed (for
+    # display in the Billing Notifications section).
+    completed_by: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     billed: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default="0"
     )

@@ -442,7 +442,7 @@ def update_task(
     job_id: int,
     task_key: str,
     payload: JobTaskUpdate,
-    _user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> JobRead:
     job = jobs_repo.get_job(db, job_id)
@@ -457,7 +457,9 @@ def update_task(
     fields = payload.model_dump(exclude_unset=True)
     prev_status = task.status
     if fields:
-        jobs_repo.update_task(db, task=task, fields=fields)
+        jobs_repo.update_task(
+            db, task=task, fields=fields, completed_by_username=user.username
+        )
         new_status = fields.get("status")
         if (
             prev_status != STATUS_COMPLETED
@@ -470,10 +472,11 @@ def update_task(
                 title="Billing milestone completed",
                 message=(
                     f"{job.customer_name}: "
-                    f"{task.task_label} was marked complete."
+                    f"{task.task_label} was marked complete by {user.username}."
                 ),
                 job_id=job_id,
                 task_key=task.task_key,
+                completed_by=user.username,
             )
 
     return to_job_read(job)

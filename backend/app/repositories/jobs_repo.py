@@ -290,20 +290,24 @@ def update_task(
     *,
     task: JobTask,
     fields: dict,
+    completed_by_username: Optional[str] = None,
 ) -> JobTask:
-    """Apply a partial update to a task with completed_at side-effects.
+    """Apply a partial update to a task with completed_at/completed_by side-effects.
 
-    - When status transitions TO 'completed' and completed_at is empty,
-      stamp it with the current UTC time.
-    - When status transitions AWAY FROM 'completed', clear completed_at.
+    - When status transitions TO 'completed': stamp completed_at (if empty)
+      and record completed_by_username as the user who completed it.
+    - When status transitions AWAY FROM 'completed': clear completed_at and
+      completed_by.
     """
     new_status = fields.get("status")
     if new_status is not None and new_status != task.status:
         if new_status == "completed":
             if task.completed_at is None:
                 task.completed_at = _utcnow()
+            task.completed_by = completed_by_username
         else:
             task.completed_at = None
+            task.completed_by = None
 
     for key, value in fields.items():
         setattr(task, key, value)
