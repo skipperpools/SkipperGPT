@@ -564,15 +564,39 @@ class UserTaskUpdate(BaseModel):
 
 
 class UserTaskMove(BaseModel):
-    direction: str = Field(..., min_length=1, max_length=8)
+    direction: Optional[str] = Field(None, min_length=1, max_length=8)
+    target_index: Optional[int] = Field(None, ge=0)
+    category: Optional[str] = None
 
     @field_validator("direction")
     @classmethod
-    def _validate_direction(cls, v: str) -> str:
+    def _validate_direction(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
         vv = v.strip().lower()
         if vv not in {"up", "down"}:
             raise ValueError("direction must be 'up' or 'down'")
         return vv
+
+    @field_validator("category")
+    @classmethod
+    def _validate_category(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        vv = v.strip().lower()
+        if vv not in VALID_USER_TASK_CATEGORIES:
+            raise ValueError(f"category must be one of {sorted(VALID_USER_TASK_CATEGORIES)}")
+        return vv
+
+    @model_validator(mode="after")
+    def _validate_move_payload(self) -> "UserTaskMove":
+        has_direction = self.direction is not None
+        has_target = self.target_index is not None
+        if has_direction == has_target:
+            raise ValueError("Provide exactly one of direction or target_index")
+        if has_direction and self.category is not None:
+            raise ValueError("category is only valid together with target_index")
+        return self
 
 
 class NotificationRead(BaseModel):

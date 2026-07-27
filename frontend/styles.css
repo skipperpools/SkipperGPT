@@ -2991,6 +2991,369 @@ body.photo-viewer-open {
 .user-task__delete {
   color: var(--status-issue);
 }
+
+/* ---------- My tasks: near-fullscreen kanban board ---------- */
+.modal__panel--full {
+  width: min(1560px, 96vw);
+  height: min(94vh, 1100px);
+  max-height: 94vh;
+}
+
+.user-tasks-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-soft);
+  flex: 0 0 auto;
+}
+.user-tasks-toolbar input,
+.user-tasks-toolbar select {
+  min-height: var(--tap);
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: #fff;
+  color: var(--text);
+}
+.user-tasks-toolbar__title {
+  flex: 2 1 220px;
+}
+.user-tasks-toolbar__note {
+  flex: 2 1 200px;
+}
+.user-tasks-toolbar__select {
+  flex: 1 1 130px;
+}
+.user-tasks-toolbar__submit {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.user-tasks-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 0 18px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elev);
+  flex: 0 0 auto;
+}
+.user-tasks-tab {
+  appearance: none;
+  border: none;
+  background: transparent;
+  padding: 10px 14px;
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.user-tasks-tab:hover {
+  color: var(--text);
+}
+.user-tasks-tab.is-active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+.user-tasks-tab__badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--status-issue);
+  color: #fff;
+  font-size: 0.68rem;
+  font-weight: 700;
+}
+
+.modal__body--board {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 12px 18px 16px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.user-tasks-pane {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.user-tasks-pane[hidden] {
+  display: none;
+}
+.user-tasks-board {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  gap: 12px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 6px;
+}
+
+.user-tasks-column {
+  flex: 1 1 240px;
+  min-width: 230px;
+  max-width: 360px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+.user-tasks-column__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  border-top: 3px solid var(--border-strong);
+  font-weight: 700;
+  font-size: 0.85rem;
+  flex: 0 0 auto;
+}
+.user-tasks-column[data-category="sales"] .user-tasks-column__header {
+  border-top-color: var(--section-notes-title);
+}
+.user-tasks-column[data-category="construction"] .user-tasks-column__header {
+  border-top-color: var(--status-in-progress);
+}
+.user-tasks-column[data-category="warranty"] .user-tasks-column__header {
+  border-top-color: var(--status-issue);
+}
+.user-tasks-column__count {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  background: var(--bg-elev);
+  border-radius: 999px;
+  padding: 1px 7px;
+}
+.user-tasks-column__list {
+  flex: 1 1 auto;
+  min-height: 60px;
+  overflow-y: auto;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.user-tasks-column__list.is-drag-active {
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+.user-tasks-column__empty {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  text-align: center;
+  padding: 12px 4px;
+}
+
+.user-task-card {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  padding: 7px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elev);
+  border-left: 4px solid var(--border-strong);
+}
+.user-task-card[data-category="sales"] {
+  border-left-color: var(--section-notes-title);
+}
+.user-task-card[data-category="construction"] {
+  border-left-color: var(--status-in-progress);
+}
+.user-task-card[data-category="warranty"] {
+  border-left-color: var(--status-issue);
+}
+.user-task-card[data-completed="1"] {
+  opacity: 0.6;
+}
+.user-task-card[data-completed="1"] .user-task-card__title {
+  text-decoration: line-through;
+}
+.user-task-card--pinned {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+.user-task-card--dragging {
+  opacity: 0.4;
+  pointer-events: none;
+}
+.user-task-card--drop-target {
+  box-shadow: 0 -2px 0 0 var(--accent);
+}
+.user-task-card__drag-handle {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  padding: 4px 2px;
+  margin-top: 1px;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  cursor: grab;
+  touch-action: none;
+}
+.user-task-card__drag-handle:hover {
+  color: var(--text);
+}
+.user-task-card__check {
+  margin-top: 3px;
+  width: 18px;
+  height: 18px;
+  accent-color: var(--status-completed);
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+.user-task-card__body {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.user-task-card__title-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.user-task-card__title {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.86rem;
+  font-weight: 600;
+  border: 1px solid transparent;
+  background: transparent;
+  padding: 2px 4px;
+  border-radius: 4px;
+  color: var(--text);
+}
+.user-task-card__title:hover,
+.user-task-card__title:focus {
+  border-color: var(--border);
+  background: var(--bg-soft);
+}
+.user-task-card__title:focus {
+  outline: 1px solid var(--accent);
+}
+.user-task-card__toggle {
+  flex: 0 0 auto;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 2px 5px;
+  font-size: 0.72rem;
+  line-height: 1;
+}
+.user-task-card__toggle:hover {
+  color: var(--text);
+}
+.user-task-card__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  align-items: center;
+  font-size: 0.68rem;
+  color: var(--text-muted);
+}
+.user-task-card__from-badge,
+.user-task-card__pin-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.6rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: #fff;
+  background: var(--brand, #0b3d62);
+  border-radius: 4px;
+  padding: 2px 6px;
+  white-space: nowrap;
+}
+.user-task-card__pin-badge {
+  background: var(--accent);
+}
+.user-task-card__note-flag,
+.user-task-card__attach-flag {
+  white-space: nowrap;
+}
+.user-task-card__details {
+  display: none;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 2px;
+}
+.user-task-card--expanded .user-task-card__details {
+  display: flex;
+}
+.user-task-card__note {
+  width: 100%;
+  font-size: 0.82rem;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-soft);
+  color: var(--text);
+  resize: vertical;
+}
+.user-task-card__category-select,
+.user-task-card__assignee-select {
+  width: 100%;
+  font-size: 0.78rem;
+  padding: 5px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: #fff;
+  color: var(--text);
+}
+.user-task-card__assigned-note {
+  font-size: 0.74rem;
+  color: var(--text-muted);
+}
+.user-task-card__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+.user-task-card__delete {
+  color: var(--status-issue);
+}
+
+@media (max-width: 720px) {
+  .modal__panel--full {
+    width: 100vw;
+    height: 100vh;
+    max-height: 100vh;
+    border-radius: 0;
+  }
+  .user-tasks-toolbar__title,
+  .user-tasks-toolbar__note {
+    flex-basis: 100%;
+  }
+  .user-tasks-column {
+    min-width: 78vw;
+  }
+}
+
 .notifications-empty {
   color: var(--text-muted);
   font-size: 0.9rem;

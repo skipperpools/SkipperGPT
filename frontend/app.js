@@ -35,7 +35,18 @@ const state = {
   adminTasksUsername: null,
   /** @type {"all" | "assigned" | "own"} filter applied to the "My tasks" list */
   userTasksMineFilter: "all",
+  /** @type {"mine" | "created"} active tab in the "My tasks" modal */
+  userTasksActiveTab: "mine",
+  /** @type {Set<number>} task ids whose card is expanded in the "My tasks" board */
+  userTaskExpanded: new Set(),
 };
+
+const USER_TASK_CATEGORIES = [
+  { value: "general", label: "General" },
+  { value: "sales", label: "Sales" },
+  { value: "construction", label: "Construction" },
+  { value: "warranty", label: "Warranty" },
+];
 
 const POLL_BASE_INTERVAL_MS = 5000;
 const POLL_MAX_BACKOFF_MS = 60000;
@@ -1907,8 +1918,8 @@ const apiClient = {
   createUserTask: (payload) => api("/user-tasks", { method: "POST", body: payload }),
   updateUserTask: (id, payload) => api(`/user-tasks/${id}`, { method: "PATCH", body: payload }),
   deleteUserTask: (id) => api(`/user-tasks/${id}`, { method: "DELETE" }),
-  moveUserTask: (id, direction) =>
-    api(`/user-tasks/${id}/move`, { method: "PATCH", body: { direction } }),
+  moveUserTask: (id, payload) =>
+    api(`/user-tasks/${id}/move`, { method: "PATCH", body: payload }),
   listUserTaskAttachments: (taskId) => api(`/user-tasks/${taskId}/attachments`),
   uploadUserTaskAttachment: async (taskId, file) => {
     const fd = new FormData();
@@ -5506,6 +5517,13 @@ function wireModal() {
     }
     await refreshUserTasksMineList();
   });
+  $(".user-tasks-tabs")?.addEventListener("click", (e) => {
+    const btn = e.target.closest(".user-tasks-tab");
+    if (!btn) return;
+    const tab = btn.dataset.tab || "mine";
+    if (tab === state.userTasksActiveTab) return;
+    switchUserTasksTab(tab);
+  });
   if (modal) {
     modal.addEventListener("click", (e) => {
       if (e.target.dataset.close === "1") closeModal();
@@ -5968,6 +5986,7 @@ function openUserTasksModal() {
   const modal = $("#user-tasks-modal");
   if (!modal) return;
   modal.hidden = false;
+  switchUserTasksTab("mine");
   loadAssignableUsersForForm();
   refreshUserTasksMineList();
   refreshUserTasksCreatedList();
@@ -6249,7 +6268,7 @@ function renderUserTaskRow(task, onRefresh, options = {}) {
         title: "Move up",
         onclick: async () => {
           try {
-            await apiClient.moveUserTask(task.id, "up");
+            await apiClient.moveUserTask(task.id, { direction: "up" });
             await onRefresh();
           } catch (err) {
             toast(err.message, "error");
@@ -6262,7 +6281,7 @@ function renderUserTaskRow(task, onRefresh, options = {}) {
         title: "Move down",
         onclick: async () => {
           try {
-            await apiClient.moveUserTask(task.id, "down");
+            await apiClient.moveUserTask(task.id, { direction: "down" });
             await onRefresh();
           } catch (err) {
             toast(err.message, "error");
@@ -6304,6 +6323,425 @@ function renderUserTaskRow(task, onRefresh, options = {}) {
   ]);
 }
 
+// ---- Render: "My tasks" modal kanban board (near-fullscreen redesign) ----
+
+function renderUserTaskCard(task, onRefresh, options = {}) {
+  const { draggable = false, showAssignee = false, showCreator = false } = options;
+
+  const card = el("div", {
+    class: task.is_pinned ? "user-task-card user-task-card--pinned" : "user-task-card",
+    dataset: {
+      taskId: String(task.id),
+      completed: task.completed ? "1" : "0",
+      pinned: task.is_pinned ? "1" : "0",
+      category: task.category || "general",
+    },
+  });
+
+  if (draggable) {
+    card.appendChild(
+      el("button", {
+        type: "button",
+        class: "user-task-card__drag-handle",
+        "aria-label": "Drag to reorder or move to another category",
+        title: "Drag to reorder or move to another category",
+      }, [createTaskDragHandleIcon()])
+    );
+  }
+
+  const check = el("input", {
+    type: "checkbox",
+    class: "user-task-card__check",
+    checked: task.completed ? true : null,
+    "aria-label": "Mark complete",
+  });
+  check.addEventListener("change", async () => {
+    try {
+      await apiClient.updateUserTask(task.id, { completed: check.checked });
+      await onRefresh();
+      await refreshNotificationCounts();
+    } catch (err) {
+      toast(err.message, "error");
+      check.checked = task.completed;
+    }
+  });
+
+  const titleInput = el("input", {
+    type: "text",
+    class: "user-task-card__title",
+    value: task.title,
+    maxlength: "255",
+    "aria-label": "Task title",
+  });
+  const saveTitle = async () => {
+    const title = String(titleInput.value ?? "").trim();
+    if (!title) {
+      toast("Title is required", "error");
+      titleInput.value = task.title;
+      return;
+    }
+    if (title === task.title) return;
+    try {
+      await apiClient.updateUserTask(task.id, { title });
+      await onRefresh();
+    } catch (err) {
+      toast(err.message, "error");
+      titleInput.value = task.title;
+    }
+  };
+  titleInput.addEventListener("change", saveTitle);
+
+  const toggleBtn = el("button", {
+    type: "button",
+    class: "user-task-card__toggle",
+  }, "▾");
+
+  const titleRow = el("div", { class: "user-task-card__title-row" }, [titleInput, toggleBtn]);
+
+  const metaParts = [];
+  if (showCreator && task.creator_username && task.user_id !== state.user?.id) {
+    metaParts.push(
+      el("span", {
+        class: "user-task-card__from-badge",
+        title: `Assigned by ${task.creator_username}`,
+      }, `From ${task.creator_username}`)
+    );
+  }
+  if (showAssignee && task.assignee_username) {
+    metaParts.push(el("span", { class: "user-task-card__assigned-note" }, `→ ${task.assignee_username}`));
+  }
+  if (task.is_pinned) {
+    metaParts.push(el("span", { class: "user-task-card__pin-badge" }, "Pinned"));
+  }
+  if (task.note) {
+    metaParts.push(el("span", { class: "user-task-card__note-flag", title: "Has a note" }, "📝"));
+  }
+  if ((task.attachments || []).length) {
+    metaParts.push(
+      el("span", { class: "user-task-card__attach-flag", title: "Has attachments" }, `📎 ${task.attachments.length}`)
+    );
+  }
+  const metaRow = metaParts.length ? el("div", { class: "user-task-card__meta" }, metaParts) : null;
+
+  const noteTa = el("textarea", {
+    class: "user-task-card__note",
+    rows: 2,
+    maxlength: "8000",
+    placeholder: "Optional note…",
+    "aria-label": "Task note",
+  });
+  noteTa.value = task.note || "";
+  noteTa.addEventListener("change", async () => {
+    const note = String(noteTa.value ?? "").trim() || null;
+    try {
+      await apiClient.updateUserTask(task.id, { note });
+      await onRefresh();
+    } catch (err) {
+      toast(err.message, "error");
+    }
+  });
+
+  const categorySel = el("select", {
+    class: "user-task-card__category-select",
+    "aria-label": "Category",
+  });
+  for (const { value, label } of USER_TASK_CATEGORIES) {
+    const opt = el("option", { value }, label);
+    if ((task.category || "general") === value) opt.selected = true;
+    categorySel.appendChild(opt);
+  }
+  categorySel.addEventListener("change", async () => {
+    const category = categorySel.value;
+    if (category === (task.category || "general")) return;
+    try {
+      await apiClient.updateUserTask(task.id, { category });
+      await onRefresh();
+    } catch (err) {
+      toast(err.message, "error");
+      categorySel.value = task.category || "general";
+    }
+  });
+
+  const detailsChildren = [noteTa, categorySel];
+
+  if (showAssignee && canChangeAssignee(task)) {
+    const assigneeSel = el("select", {
+      class: "user-task-card__assignee-select",
+      "aria-label": "Assignee",
+    });
+    for (const u of state.assignableUsers || []) {
+      const opt = el("option", { value: String(u.id) }, u.username);
+      if (u.id === task.assignee_id) opt.selected = true;
+      assigneeSel.appendChild(opt);
+    }
+    assigneeSel.addEventListener("change", async () => {
+      const assigneeId = Number(assigneeSel.value);
+      if (!assigneeId || assigneeId === task.assignee_id) return;
+      try {
+        const updated = await apiClient.updateUserTask(task.id, { assignee_id: assigneeId });
+        if (
+          state.user &&
+          assigneeId === state.user.id &&
+          updated.user_id !== state.user.id
+        ) {
+          maybePromptPushOnAssignment();
+        }
+        await onRefresh();
+        await refreshNotificationCounts();
+      } catch (err) {
+        toast(err.message, "error");
+        assigneeSel.value = String(task.assignee_id);
+      }
+    });
+    detailsChildren.push(assigneeSel);
+  }
+
+  const attachmentsWrap = el("div", { class: "user-task__attachments" });
+  renderUserTaskAttachments(task, attachmentsWrap, onRefresh);
+  detailsChildren.push(attachmentsWrap);
+
+  const actions = [];
+  actions.push(
+    el("button", {
+      type: "button",
+      class: task.is_pinned
+        ? "btn btn--ghost btn--sm user-task__pin user-task__pin--active"
+        : "btn btn--ghost btn--sm user-task__pin",
+      title: task.is_pinned ? "Unpin task" : "Pin task to top",
+      "aria-label": task.is_pinned ? "Unpin task" : "Pin task to top",
+      onclick: async () => {
+        try {
+          await apiClient.updateUserTask(task.id, { is_pinned: !task.is_pinned });
+          await onRefresh();
+        } catch (err) {
+          toast(err.message, "error");
+        }
+      },
+    }, task.is_pinned ? "📌 Pinned" : "📌 Pin")
+  );
+  actions.push(
+    el("button", {
+      type: "button",
+      class: "btn btn--ghost btn--sm user-task-card__delete",
+      onclick: async () => {
+        if (!window.confirm("Delete this task?")) return;
+        try {
+          await apiClient.deleteUserTask(task.id);
+          await onRefresh();
+          await refreshUserTasksCreatedList();
+          await refreshNotificationCounts();
+        } catch (err) {
+          toast(err.message, "error");
+        }
+      },
+    }, "Delete")
+  );
+  detailsChildren.push(el("div", { class: "user-task-card__actions" }, actions));
+
+  const details = el("div", { class: "user-task-card__details" }, detailsChildren);
+
+  const setExpanded = (expanded) => {
+    card.classList.toggle("user-task-card--expanded", expanded);
+    const label = expanded ? "Hide details" : "Show details";
+    toggleBtn.textContent = expanded ? "▴" : "▾";
+    toggleBtn.setAttribute("aria-label", label);
+    toggleBtn.title = label;
+    if (expanded) state.userTaskExpanded.add(task.id);
+    else state.userTaskExpanded.delete(task.id);
+  };
+  toggleBtn.addEventListener("click", () => {
+    setExpanded(!card.classList.contains("user-task-card--expanded"));
+  });
+  setExpanded(state.userTaskExpanded.has(task.id));
+
+  const bodyChildren = [titleRow];
+  if (metaRow) bodyChildren.push(metaRow);
+  bodyChildren.push(details);
+
+  card.appendChild(check);
+  card.appendChild(el("div", { class: "user-task-card__body" }, bodyChildren));
+
+  return card;
+}
+
+function renderUserTasksBoard(boardEl, items, onRefresh, options = {}) {
+  if (!boardEl) return;
+  boardEl.innerHTML = "";
+  for (const cat of USER_TASK_CATEGORIES) {
+    const column = el("div", {
+      class: "user-tasks-column",
+      dataset: { category: cat.value },
+    });
+    const list = el("div", {
+      class: "user-tasks-column__list",
+      dataset: { category: cat.value },
+    });
+    const inCategory = items.filter((t) => (t.category || "general") === cat.value);
+    const countBadge = el("span", { class: "user-tasks-column__count" }, String(inCategory.length));
+    column.appendChild(
+      el("div", { class: "user-tasks-column__header" }, [el("span", {}, cat.label), countBadge])
+    );
+    if (!inCategory.length) {
+      list.appendChild(el("p", { class: "user-tasks-column__empty" }, "No tasks"));
+    } else {
+      for (const task of inCategory) {
+        list.appendChild(
+          renderUserTaskCard(task, onRefresh, {
+            draggable: options.draggable,
+            showAssignee: options.showAssignee,
+            showCreator: options.showCreator,
+          })
+        );
+      }
+    }
+    column.appendChild(list);
+    boardEl.appendChild(column);
+  }
+  if (options.draggable) {
+    attachUserTaskBoardDragDrop(boardEl, options.onDropped);
+  }
+}
+
+function getUserTaskCardDragAfterElement(listEl, clientY) {
+  const cards = [...listEl.querySelectorAll(":scope > .user-task-card:not(.user-task-card--dragging)")];
+  return cards.reduce(
+    (closest, child) => {
+      const box = child.getBoundingClientRect();
+      const offset = clientY - box.top - box.height / 2;
+      if (offset < 0 && offset > closest.offset) {
+        return { offset, element: child };
+      }
+      return closest;
+    },
+    { offset: Number.NEGATIVE_INFINITY, element: null }
+  ).element;
+}
+
+function attachUserTaskBoardDragDrop(boardEl, onDropped) {
+  if (!boardEl || boardEl.dataset.dndAttached === "1") return;
+  boardEl.dataset.dndAttached = "1";
+
+  let dragState = null;
+
+  const getLists = () => [...boardEl.querySelectorAll(".user-tasks-column__list")];
+
+  const clearDropTargets = () => {
+    for (const list of getLists()) {
+      list.classList.remove("is-drag-active");
+      for (const card of list.querySelectorAll(".user-task-card--drop-target")) {
+        card.classList.remove("user-task-card--drop-target");
+      }
+    }
+  };
+
+  const cleanupDragUi = () => {
+    boardEl.classList.remove("user-tasks-board--dragging");
+    if (dragState?.card) dragState.card.classList.remove("user-task-card--dragging");
+    clearDropTargets();
+  };
+
+  const findList = (target) => target?.closest?.(".user-tasks-column__list") || null;
+
+  boardEl.addEventListener("pointerdown", (e) => {
+    const handle = e.target.closest(".user-task-card__drag-handle");
+    if (!handle || !boardEl.contains(handle)) return;
+    const card = handle.closest(".user-task-card");
+    const startList = findList(card);
+    if (!card || !startList) return;
+    e.preventDefault();
+    e.stopPropagation();
+
+    dragState = {
+      card,
+      startList,
+      pointerId: e.pointerId,
+    };
+    card.classList.add("user-task-card--dragging");
+    boardEl.classList.add("user-tasks-board--dragging");
+    try {
+      handle.setPointerCapture(e.pointerId);
+    } catch (_) {
+      /* ignore */
+    }
+  });
+
+  boardEl.addEventListener("pointermove", (e) => {
+    if (!dragState || e.pointerId !== dragState.pointerId) return;
+    e.preventDefault();
+    e.stopPropagation();
+
+    const elAtPoint = document.elementFromPoint(e.clientX, e.clientY);
+    const targetList = findList(elAtPoint) || dragState.startList;
+    clearDropTargets();
+    targetList.classList.add("is-drag-active");
+
+    const afterElement = getUserTaskCardDragAfterElement(targetList, e.clientY);
+    if (afterElement) {
+      afterElement.classList.add("user-task-card--drop-target");
+      targetList.insertBefore(dragState.card, afterElement);
+    } else {
+      targetList.appendChild(dragState.card);
+    }
+  });
+
+  const finishDrag = async (commit) => {
+    if (!dragState) return;
+    const { card, startList } = dragState;
+    const endList = findList(card) || startList;
+    cleanupDragUi();
+    dragState = null;
+
+    if (!commit) {
+      if (typeof onDropped === "function") await onDropped();
+      return;
+    }
+
+    const finalIndex = [...endList.querySelectorAll(":scope > .user-task-card")].indexOf(card);
+    const category = endList.dataset.category;
+    const taskId = Number(card.dataset.taskId);
+    if (!taskId || finalIndex < 0) return;
+
+    try {
+      const payload = { target_index: finalIndex };
+      if (category) payload.category = category;
+      const updated = await apiClient.moveUserTask(taskId, payload);
+      card.dataset.category = updated.category || category;
+      if (typeof onDropped === "function") await onDropped();
+    } catch (err) {
+      toast(`Failed to move task: ${err.message}`, "error");
+      if (typeof onDropped === "function") await onDropped();
+    }
+  };
+
+  boardEl.addEventListener("pointerup", (e) => {
+    if (!dragState || e.pointerId !== dragState.pointerId) return;
+    e.preventDefault();
+    e.stopPropagation();
+    void finishDrag(true);
+  });
+
+  boardEl.addEventListener("pointercancel", (e) => {
+    if (!dragState || e.pointerId !== dragState.pointerId) return;
+    void finishDrag(false);
+  });
+}
+
+function switchUserTasksTab(tab) {
+  state.userTasksActiveTab = tab;
+  const tabsWrap = $(".user-tasks-tabs");
+  if (tabsWrap) {
+    for (const btn of tabsWrap.querySelectorAll(".user-tasks-tab")) {
+      const isActive = btn.dataset.tab === tab;
+      btn.classList.toggle("is-active", isActive);
+      btn.setAttribute("aria-selected", isActive ? "true" : "false");
+    }
+  }
+  const minePane = $("#user-tasks-pane-mine");
+  const createdPane = $("#user-tasks-pane-created");
+  if (minePane) minePane.hidden = tab !== "mine";
+  if (createdPane) createdPane.hidden = tab !== "created";
+}
+
 function filterUserTasksMine(items) {
   if (state.userTasksMineFilter === "assigned") {
     return (items ?? []).filter((t) => t.user_id !== state.user?.id);
@@ -6315,44 +6753,49 @@ function filterUserTasksMine(items) {
 }
 
 async function refreshUserTasksMineList() {
-  const wrap = $("#user-tasks-mine-list");
-  if (!wrap) return;
-  wrap.textContent = "Loading…";
+  const board = $("#user-tasks-mine-board");
+  if (!board) return;
   try {
     const items = await apiClient.listMyUserTasks();
     poller.channels.userTasksMine.lastSig = userTasksSignature(items);
-    wrap.innerHTML = "";
     const visible = filterUserTasksMine(items);
-    if (!visible.length) {
-      wrap.appendChild(
-        el(
-          "p",
-          { class: "user-tasks-empty" },
-          items.length ? "No tasks match this filter." : "No tasks assigned to you."
-        )
-      );
-      return;
-    }
-    for (const task of visible) {
-      wrap.appendChild(
-        renderUserTaskRow(task, async () => {
-          await refreshUserTasksMineList();
-          await refreshUserTasksCreatedList();
-        }, { showReorder: true, showCreator: true })
-      );
+    const onRefresh = async () => {
+      await refreshUserTasksMineList();
+      await refreshUserTasksCreatedList();
+    };
+    renderUserTasksBoard(board, visible, onRefresh, {
+      draggable: true,
+      showCreator: true,
+      onDropped: onRefresh,
+    });
+    if (!items.length) {
+      board.innerHTML = "";
+      board.appendChild(el("p", { class: "user-tasks-empty" }, "No tasks assigned to you."));
+    } else if (!visible.length) {
+      board.innerHTML = "";
+      board.appendChild(el("p", { class: "user-tasks-empty" }, "No tasks match this filter."));
     }
   } catch (err) {
-    wrap.textContent = "";
-    wrap.appendChild(el("p", { class: "users-error" }, `Failed to load: ${err.message}`));
+    board.innerHTML = "";
+    board.appendChild(el("p", { class: "users-error" }, `Failed to load: ${err.message}`));
   }
 }
 
 async function refreshCreatorTaskNotificationsList() {
   const wrap = $("#user-task-notifications-list");
+  const badge = $("#user-tasks-created-badge");
   if (!wrap) return;
   try {
     const items = (await apiClient.listMyTaskNotifications()).filter((n) => !n.read);
     wrap.innerHTML = "";
+    if (badge) {
+      if (items.length) {
+        badge.hidden = false;
+        badge.textContent = String(items.length);
+      } else {
+        badge.hidden = true;
+      }
+    }
     if (!items.length) return;
     for (const item of items) {
       wrap.appendChild(
@@ -6383,27 +6826,25 @@ async function refreshCreatorTaskNotificationsList() {
 }
 
 async function refreshUserTasksCreatedList() {
-  const wrap = $("#user-tasks-created-list");
-  if (!wrap) return;
-  wrap.textContent = "Loading…";
+  const board = $("#user-tasks-created-board");
+  if (!board) return;
   try {
     const items = await apiClient.listCreatedUserTasks();
-    wrap.innerHTML = "";
+    const onRefresh = async () => {
+      await refreshUserTasksMineList();
+      await refreshUserTasksCreatedList();
+    };
+    renderUserTasksBoard(board, items, onRefresh, {
+      draggable: false,
+      showAssignee: true,
+    });
     if (!items.length) {
-      wrap.appendChild(el("p", { class: "user-tasks-empty" }, "No tasks assigned to others."));
-      return;
-    }
-    for (const task of items) {
-      wrap.appendChild(
-        renderUserTaskRow(task, async () => {
-          await refreshUserTasksMineList();
-          await refreshUserTasksCreatedList();
-        }, { showAssignee: true })
-      );
+      board.innerHTML = "";
+      board.appendChild(el("p", { class: "user-tasks-empty" }, "No tasks assigned to others."));
     }
   } catch (err) {
-    wrap.textContent = "";
-    wrap.appendChild(el("p", { class: "users-error" }, `Failed to load: ${err.message}`));
+    board.innerHTML = "";
+    board.appendChild(el("p", { class: "users-error" }, `Failed to load: ${err.message}`));
   }
 }
 

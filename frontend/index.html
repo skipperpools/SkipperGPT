@@ -381,51 +381,51 @@
       <!-- Personal task list -->
       <div id="user-tasks-modal" class="modal" hidden>
         <div class="modal__backdrop" data-close="1"></div>
-        <div class="modal__panel modal__panel--wide" aria-labelledby="user-tasks-modal-title">
+        <div class="modal__panel modal__panel--full" aria-labelledby="user-tasks-modal-title">
           <header class="modal__header">
             <h2 id="user-tasks-modal-title">My tasks</h2>
             <button type="button" class="btn btn--ghost" data-close="1" aria-label="Close">x</button>
           </header>
-          <div class="modal__body modal__body--scroll">
-            <form id="user-tasks-form">
-              <label class="field">
-                <span>Title *</span>
-                <input id="user-task-title" name="title" type="text" required maxlength="255" placeholder="What needs to be done?" />
-              </label>
-              <label class="field">
-                <span>Assign to</span>
-                <select id="user-task-assignee" name="assignee_id" aria-label="Assign to"></select>
-              </label>
-              <label class="field">
-                <span>Category</span>
-                <select id="user-task-category" name="category" aria-label="Category">
-                  <option value="general" selected>General</option>
-                  <option value="sales">Sales</option>
-                  <option value="construction">Construction</option>
-                  <option value="warranty">Warranty</option>
-                </select>
-              </label>
-              <label class="field">
-                <span>Note (optional)</span>
-                <textarea id="user-task-note" name="note" rows="2" maxlength="8000" placeholder="Optional details…"></textarea>
-              </label>
-            </form>
-            <h3 class="user-tasks-section-title">My tasks</h3>
-            <p class="user-tasks-section-hint">Assigned to you</p>
-            <div id="user-tasks-mine-filter" class="user-tasks-filter" role="group" aria-label="Filter my tasks">
-              <button type="button" class="user-tasks-filter__btn is-active" data-filter="all">All</button>
-              <button type="button" class="user-tasks-filter__btn" data-filter="assigned">Assigned to me</button>
-              <button type="button" class="user-tasks-filter__btn" data-filter="own">My own</button>
-            </div>
-            <div id="user-tasks-mine-list" class="user-tasklist"></div>
-            <h3 class="user-tasks-section-title user-tasks-section-title--created">Tasks I've created</h3>
-            <p class="user-tasks-section-hint">Assigned to someone else</p>
-            <div id="user-task-notifications-list" class="user-task-notifications-list"></div>
-            <div id="user-tasks-created-list" class="user-tasklist user-tasklist--created"></div>
+
+          <form id="user-tasks-form" class="user-tasks-toolbar">
+            <input id="user-task-title" name="title" type="text" required maxlength="255" placeholder="What needs to be done?" class="user-tasks-toolbar__title" aria-label="Task title" />
+            <select id="user-task-assignee" name="assignee_id" aria-label="Assign to" class="user-tasks-toolbar__select"></select>
+            <select id="user-task-category" name="category" aria-label="Category" class="user-tasks-toolbar__select">
+              <option value="general" selected>General</option>
+              <option value="sales">Sales</option>
+              <option value="construction">Construction</option>
+              <option value="warranty">Warranty</option>
+            </select>
+            <input id="user-task-note" name="note" type="text" maxlength="8000" placeholder="Optional note…" class="user-tasks-toolbar__note" aria-label="Optional note" />
+            <button type="submit" class="btn btn--primary user-tasks-toolbar__submit">Add task</button>
+          </form>
+
+          <div class="user-tasks-tabs" role="tablist" aria-label="Task views">
+            <button type="button" class="user-tasks-tab is-active" data-tab="mine" role="tab" aria-selected="true">My tasks</button>
+            <button type="button" class="user-tasks-tab" data-tab="created" role="tab" aria-selected="false">
+              Tasks I've created
+              <span id="user-tasks-created-badge" class="user-tasks-tab__badge" hidden>0</span>
+            </button>
           </div>
+
+          <div class="modal__body modal__body--board">
+            <section id="user-tasks-pane-mine" class="user-tasks-pane" data-pane="mine">
+              <div id="user-tasks-mine-filter" class="user-tasks-filter" role="group" aria-label="Filter my tasks">
+                <button type="button" class="user-tasks-filter__btn is-active" data-filter="all">All</button>
+                <button type="button" class="user-tasks-filter__btn" data-filter="assigned">Assigned to me</button>
+                <button type="button" class="user-tasks-filter__btn" data-filter="own">My own</button>
+              </div>
+              <div id="user-tasks-mine-board" class="user-tasks-board" data-board="mine"></div>
+            </section>
+
+            <section id="user-tasks-pane-created" class="user-tasks-pane" data-pane="created" hidden>
+              <div id="user-task-notifications-list" class="user-task-notifications-list"></div>
+              <div id="user-tasks-created-board" class="user-tasks-board" data-board="created"></div>
+            </section>
+          </div>
+
           <footer class="modal__footer">
             <button type="button" class="btn btn--ghost" data-close="1">Close</button>
-            <button type="submit" form="user-tasks-form" class="btn btn--primary">Add task</button>
           </footer>
         </div>
       </div>

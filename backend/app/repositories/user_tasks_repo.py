@@ -170,3 +170,47 @@ def move_task(db: Session, *, task: UserTask, direction: str) -> bool:
     )
     db.commit()
     return True
+
+
+def reorder_user_task(
+    db: Session,
+    *,
+    task: UserTask,
+    target_index: int,
+    category: Optional[str] = None,
+) -> bool:
+    """Move task to target_index (0-based) within its category column for its
+    assignee, optionally recategorizing it first (a cross-column drag/drop).
+
+    sort_order remains a single sequence per assignee across all categories;
+    columns are just filtered views of that sequence. To land the task at
+    target_index *within its column* while leaving every other task's
+    relative order (in any column) untouched, we take the assignee's full
+    order minus this task, locate where the same-category siblings sit
+    within that sequence, splice the task in at the right spot, and
+    renumber sort_order sequentially.
+    """
+    new_category = category if category is not None else task.category
+    rows = list_for_assignee(db, task.assignee_id)
+    if not any(row.id == task.id for row in rows):
+        return False
+
+    others = [row for row in rows if row.id != task.id]
+    task.category = new_category
+
+    sibling_positions = [i for i, row in enumerate(others) if row.category == new_category]
+    if not sibling_positions:
+        insert_at = len(others)
+    else:
+        clamped = max(0, min(target_index, len(sibling_positions)))
+        if clamped >= len(sibling_positions):
+            insert_at = sibling_positions[-1] + 1
+        else:
+            insert_at = sibling_positions[clamped]
+
+    others.insert(insert_at, task)
+    for i, row in enumerate(others):
+        row.sort_order = i
+
+    db.commit()
+    return True

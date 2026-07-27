@@ -215,7 +215,15 @@ def move_user_task_route(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only the assignee can reorder this task",
         )
-    user_tasks_repo.move_task(db, task=task, direction=payload.direction)
+    if payload.target_index is not None:
+        user_tasks_repo.reorder_user_task(
+            db,
+            task=task,
+            target_index=payload.target_index,
+            category=payload.category,
+        )
+    else:
+        user_tasks_repo.move_task(db, task=task, direction=payload.direction)
     task = _get_task_or_404(db, task_id)
     cname, aname = _usernames_for_task(db, task)
     return _to_read(task, creator_username=cname, assignee_username=aname)
