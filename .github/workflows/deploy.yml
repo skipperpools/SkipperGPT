@@ -15,6 +15,7 @@ jobs:
           username: skipper
           key: ${{ secrets.DROPLET_SSH_KEY }}
           script: |
+            set -euo pipefail
             cd /home/skipper/app
             git pull origin master
             cd backend
