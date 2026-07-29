@@ -1857,6 +1857,72 @@ async function loginRequest(username, password) {
   return res.json();
 }
 
+/**
+ * Photo uploads use XMLHttpRequest instead of fetch so we get (a) real upload
+ * progress and (b) a hard timeout. Plain fetch() has neither: a stalled mobile
+ * upload (weak signal, the OS backgrounding the tab, etc.) used to spin the
+ * "Uploading..." UI forever with nothing to catch and no way to tell it apart
+ * from a slow-but-working upload.
+ */
+function computeUploadTimeoutMs(fileSizeBytes) {
+  const MIN_TIMEOUT_MS = 30_000; // floor, so small files still get a fair shot
+  const MAX_TIMEOUT_MS = 5 * 60_000; // ceiling, so we never hang "forever"
+  const ASSUMED_MIN_KBPS = 150; // conservative floor for a struggling mobile connection
+  const estimatedMs = ((fileSizeBytes || 0) / 1024 / ASSUMED_MIN_KBPS) * 1000;
+  return Math.min(MAX_TIMEOUT_MS, Math.max(MIN_TIMEOUT_MS, estimatedMs));
+}
+
+function uploadJobPhotoWithProgress(jobId, file, onProgress) {
+  return new Promise((resolve, reject) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `${API}/jobs/${jobId}/photos`);
+    const headers = authHeaders();
+    Object.entries(headers).forEach(([key, value]) => xhr.setRequestHeader(key, value));
+    xhr.timeout = computeUploadTimeoutMs(file?.size);
+
+    xhr.upload.onprogress = (e) => {
+      if (onProgress && e.lengthComputable) onProgress(e.loaded / e.total);
+    };
+
+    xhr.onload = async () => {
+      if (xhr.status === 401) {
+        await handleUnauthorized({ sessionExpiredUI: true });
+        reject(new Error("Unauthorized"));
+        return;
+      }
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try {
+          resolve(JSON.parse(xhr.responseText));
+        } catch {
+          reject(new Error("Upload finished but the server response could not be read."));
+        }
+        return;
+      }
+      let detail = `HTTP ${xhr.status}`;
+      try {
+        const data = JSON.parse(xhr.responseText);
+        if (data?.detail) detail = typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail);
+      } catch {
+        /* ignore */
+      }
+      reject(new Error(detail));
+    };
+    xhr.ontimeout = () => {
+      reject(new Error("Upload timed out — check your connection and try again."));
+    };
+    xhr.onerror = () => {
+      reject(new Error("Network error during upload — check your connection and try again."));
+    };
+    xhr.onabort = () => {
+      reject(new Error("Upload cancelled."));
+    };
+
+    xhr.send(fd);
+  });
+}
+
 const apiClient = {
   me: () => api("/auth/me"),
   listJobs: () => {
@@ -1977,13 +2043,7 @@ const apiClient = {
     if (!res.ok) throw new Error(await parseFetchError(res));
     return res.blob();
   },
-  uploadJobPhoto: async (jobId, file) => {
-    const fd = new FormData();
-    fd.append("file", file);
-    const res = await authFetch(`/jobs/${jobId}/photos`, { method: "POST", body: fd });
-    if (!res.ok) throw new Error(await parseFetchError(res));
-    return res.json();
-  },
+  uploadJobPhoto: (jobId, file, onProgress) => uploadJobPhotoWithProgress(jobId, file, onProgress),
   deleteJobPhoto: async (jobId, photoId) => {
     const res = await authFetch(`/jobs/${jobId}/photos/${photoId}`, { method: "DELETE" });
     if (!res.ok) throw new Error(await parseFetchError(res));
@@ -2049,13 +2109,16 @@ const apiClient = {
   },
 };
 
-async function uploadJobPhotosSequential(jobId, files) {
+async function uploadJobPhotosSequential(jobId, files, onProgress) {
   const list = Array.from(files ?? []);
   let lastUpdated = null;
   const failed = [];
-  for (const file of list) {
+  for (let i = 0; i < list.length; i++) {
+    const file = list[i];
     try {
-      lastUpdated = await apiClient.uploadJobPhoto(jobId, file);
+      lastUpdated = await apiClient.uploadJobPhoto(jobId, file, (fraction) => {
+        onProgress?.(i, list.length, fraction);
+      });
       replaceJob(lastUpdated);
     } catch (err) {
       failed.push({ name: file.name || "file", message: err.message });
@@ -4987,9 +5050,16 @@ function renderPhotosModalUpload(job) {
       uploadWrap.setAttribute("aria-busy", "true");
       if (dropZone) dropZone.classList.add("is-uploading");
       if (overlay) overlay.hidden = false;
-      if (statusText) statusText.textContent = "Uploading…";
+      if (statusText) {
+        statusText.textContent = files.length > 1 ? `Uploading 1 of ${files.length}…` : "Uploading…";
+      }
       fileInput.disabled = true;
-      const result = await uploadJobPhotosSequential(photosModalState.jobId, files);
+      const result = await uploadJobPhotosSequential(photosModalState.jobId, files, (index, total, fraction) => {
+        if (!statusText) return;
+        const pct = Math.round((fraction ?? 0) * 100);
+        statusText.textContent =
+          total > 1 ? `Uploading ${index + 1} of ${total}… ${pct}%` : `Uploading… ${pct}%`;
+      });
       toastJobPhotosUploadResult(result);
       if (result.lastUpdated) {
         photosModalState.selectedIndex = 0;
