@@ -1864,13 +1864,15 @@ async function loginRequest(username, password) {
  * "Uploading..." UI forever with nothing to catch and no way to tell it apart
  * from a slow-but-working upload.
  */
-function computeUploadTimeoutMs(fileSizeBytes) {
-  const MIN_TIMEOUT_MS = 30_000; // floor, so small files still get a fair shot
-  const MAX_TIMEOUT_MS = 5 * 60_000; // ceiling, so we never hang "forever"
-  const ASSUMED_MIN_KBPS = 150; // conservative floor for a struggling mobile connection
-  const estimatedMs = ((fileSizeBytes || 0) / 1024 / ASSUMED_MIN_KBPS) * 1000;
-  return Math.min(MAX_TIMEOUT_MS, Math.max(MIN_TIMEOUT_MS, estimatedMs));
-}
+// A flat timeout doesn't work well here: a large photo on a slow-but-working
+// connection can legitimately take minutes, and hard-coding a long timeout
+// just means a truly dead connection (tab suspended, wifi dropped) takes just
+// as long to report a failure. Instead we watch for *progress*: as long as
+// bytes keep landing, keep waiting; if none land for STALL_MS, the transfer
+// is dead and we abort with a clear error. ABSOLUTE_MAX_MS is a backstop so
+// even a pathologically slow trickle can't hang the UI forever.
+const UPLOAD_STALL_MS = 45_000;
+const UPLOAD_ABSOLUTE_MAX_MS = 15 * 60_000;
 
 function uploadJobPhotoWithProgress(jobId, file, onProgress) {
   return new Promise((resolve, reject) => {
@@ -1880,23 +1882,50 @@ function uploadJobPhotoWithProgress(jobId, file, onProgress) {
     xhr.open("POST", `${API}/jobs/${jobId}/photos`);
     const headers = authHeaders();
     Object.entries(headers).forEach(([key, value]) => xhr.setRequestHeader(key, value));
-    xhr.timeout = computeUploadTimeoutMs(file?.size);
+
+    const startedAt = Date.now();
+    let lastProgressAt = startedAt;
+    let settled = false;
+
+    const watchdog = setInterval(() => {
+      const now = Date.now();
+      if (now - startedAt > UPLOAD_ABSOLUTE_MAX_MS) {
+        settle(() =>
+          reject(new Error("Upload is taking far longer than expected — check your connection and try again."))
+        );
+        xhr.abort();
+        return;
+      }
+      if (now - lastProgressAt > UPLOAD_STALL_MS) {
+        settle(() => reject(new Error("Upload stalled — check your connection and try again.")));
+        xhr.abort();
+      }
+    }, 5_000);
+
+    function settle(action) {
+      if (settled) return;
+      settled = true;
+      clearInterval(watchdog);
+      action();
+    }
 
     xhr.upload.onprogress = (e) => {
+      lastProgressAt = Date.now();
       if (onProgress && e.lengthComputable) onProgress(e.loaded / e.total);
     };
 
     xhr.onload = async () => {
       if (xhr.status === 401) {
         await handleUnauthorized({ sessionExpiredUI: true });
-        reject(new Error("Unauthorized"));
+        settle(() => reject(new Error("Unauthorized")));
         return;
       }
       if (xhr.status >= 200 && xhr.status < 300) {
         try {
-          resolve(JSON.parse(xhr.responseText));
+          const data = JSON.parse(xhr.responseText);
+          settle(() => resolve(data));
         } catch {
-          reject(new Error("Upload finished but the server response could not be read."));
+          settle(() => reject(new Error("Upload finished but the server response could not be read.")));
         }
         return;
       }
@@ -1907,16 +1936,13 @@ function uploadJobPhotoWithProgress(jobId, file, onProgress) {
       } catch {
         /* ignore */
       }
-      reject(new Error(detail));
-    };
-    xhr.ontimeout = () => {
-      reject(new Error("Upload timed out — check your connection and try again."));
+      settle(() => reject(new Error(detail)));
     };
     xhr.onerror = () => {
-      reject(new Error("Network error during upload — check your connection and try again."));
+      settle(() => reject(new Error("Network error during upload — check your connection and try again.")));
     };
     xhr.onabort = () => {
-      reject(new Error("Upload cancelled."));
+      settle(() => reject(new Error("Upload cancelled.")));
     };
 
     xhr.send(fd);
