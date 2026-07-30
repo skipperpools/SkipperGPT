@@ -2744,11 +2744,13 @@ function renderJobTasksFeed(job) {
     { type: "button", class: "btn btn--primary btn--sm" },
     "Add task"
   );
-  const composerWrap = el("div", { class: "job-tasks-feed__composer-wrap" }, [
-    titleInput,
-    assigneeSel,
-    submitBtn,
-  ]);
+  const composerWrap = job.archived
+    ? el(
+        "p",
+        { class: "job-tasks-feed__empty" },
+        "This job is archived — restore it to link new tasks."
+      )
+    : el("div", { class: "job-tasks-feed__composer-wrap" }, [titleInput, assigneeSel, submitBtn]);
 
   const body = el("div", { class: "job-tasks-feed__body" }, [listWrap, composerWrap]);
   const details = el("details", { class: "job-tasks-feed__accordion" }, [summary, body]);
@@ -6221,11 +6223,17 @@ function populateUserTaskJobSelect(sel, selectedJobId) {
   const current = selectedJobId ?? (sel.value ? Number(sel.value) : null);
   sel.innerHTML = "";
   sel.appendChild(el("option", { value: "" }, "No job"));
+  // Archived jobs aren't offered as a new choice, but if a task is already
+  // linked to a job that's since been archived, keep that one option so the
+  // select still reflects reality instead of silently reverting to "No job".
   const jobs = [...state.jobs]
-    .filter((j) => !j.archived)
+    .filter((j) => !j.archived || j.id === current)
     .sort((a, b) => (a.customer_name || "").localeCompare(b.customer_name || ""));
   for (const j of jobs) {
-    const opt = el("option", { value: String(j.id) }, j.customer_name || `Job #${j.id}`);
+    const label = j.archived
+      ? `${j.customer_name || `Job #${j.id}`} (Archived)`
+      : j.customer_name || `Job #${j.id}`;
+    const opt = el("option", { value: String(j.id) }, label);
     if (current && j.id === current) opt.selected = true;
     sel.appendChild(opt);
   }
@@ -6957,8 +6965,10 @@ function attachUserTaskBoardDragDrop(boardEl, onDropped) {
     e.preventDefault();
     e.stopPropagation();
 
-    const elAtPoint = document.elementFromPoint(e.clientX, e.clientY);
-    const targetList = findList(elAtPoint) || dragState.startList;
+    // Reordering only: a card always stays in the column (Task Type) it was
+    // picked up from — drags never re-parent it into a different category,
+    // regardless of where the pointer currently is over the board.
+    const targetList = dragState.startList;
     clearDropTargets();
     targetList.classList.add("is-drag-active");
 
@@ -6974,7 +6984,6 @@ function attachUserTaskBoardDragDrop(boardEl, onDropped) {
   const finishDrag = async (commit) => {
     if (!dragState) return;
     const { card, startList } = dragState;
-    const endList = findList(card) || startList;
     cleanupDragUi();
     dragState = null;
 
@@ -6983,15 +6992,15 @@ function attachUserTaskBoardDragDrop(boardEl, onDropped) {
       return;
     }
 
-    const finalIndex = [...endList.querySelectorAll(":scope > .user-task-card")].indexOf(card);
-    const category = endList.dataset.category;
+    const finalIndex = [...startList.querySelectorAll(":scope > .user-task-card")].indexOf(card);
+    const category = startList.dataset.category;
     const taskId = Number(card.dataset.taskId);
     if (!taskId || finalIndex < 0) return;
 
     try {
-      const payload = { target_index: finalIndex };
-      if (category) payload.category = category;
-      const updated = await apiClient.moveUserTask(taskId, payload);
+      // category is always the column the card started (and stayed) in —
+      // included so reorder_user_task's splice logic has it explicitly.
+      const updated = await apiClient.moveUserTask(taskId, { target_index: finalIndex, category });
       card.dataset.category = updated.category || category;
       if (typeof onDropped === "function") await onDropped();
     } catch (err) {
