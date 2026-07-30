@@ -5711,10 +5711,12 @@ function wireModal() {
       const noteEl = $("#user-task-note");
       const categoryEl = $("#user-task-category");
       const jobEl = $("#user-task-job");
+      const addDetails = $("#user-tasks-add-details");
       if (titleEl) titleEl.value = "";
       if (noteEl) noteEl.value = "";
       if (categoryEl) categoryEl.value = "general";
       if (jobEl) jobEl.value = "";
+      if (addDetails) addDetails.open = false;
       if (
         state.user &&
         created.assignee_id === state.user.id &&
@@ -5728,6 +5730,9 @@ function wireModal() {
     } catch (err) {
       toast(err.message, "error");
     }
+  });
+  $("#user-tasks-add-details")?.addEventListener("toggle", (e) => {
+    if (e.currentTarget.open) $("#user-task-title")?.focus();
   });
   $("#user-tasks-mine-filter")?.addEventListener("click", async (e) => {
     const btn = e.target.closest(".user-tasks-filter__btn");
@@ -6210,6 +6215,10 @@ function openUserTasksModal() {
   if (!modal) return;
   modal.hidden = false;
   switchUserTasksTab("mine");
+  // Collapsed by default so the toolbar stays a single compact row and the
+  // kanban columns underneath get the vertical space, especially on mobile.
+  const addDetails = $("#user-tasks-add-details");
+  if (addDetails) addDetails.open = false;
   loadAssignableUsersForForm();
   populateUserTaskJobSelect($("#user-task-job"));
   refreshUserTasksMineList();

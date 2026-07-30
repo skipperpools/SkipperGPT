@@ -3100,6 +3100,50 @@ body.photo-viewer-open {
   white-space: nowrap;
 }
 
+.user-tasks-add-accordion {
+  flex: 1 1 100%;
+}
+.user-tasks-add-accordion__summary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  list-style: none;
+  cursor: pointer;
+  min-height: var(--tap);
+  padding: 0 14px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: #fff;
+  color: var(--accent);
+  font-weight: 700;
+  font-size: 0.88rem;
+  user-select: none;
+}
+.user-tasks-add-accordion__summary::-webkit-details-marker {
+  display: none;
+}
+.user-tasks-add-accordion__summary::marker {
+  content: "";
+}
+.user-tasks-add-accordion__summary:hover {
+  background: var(--brand-100);
+}
+.user-tasks-add-accordion__summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.user-tasks-add-accordion[open] > .user-tasks-add-accordion__summary {
+  border-style: solid;
+  border-color: var(--accent);
+  margin-bottom: 10px;
+}
+.user-tasks-add-accordion__fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
 .user-tasks-tabs {
   display: flex;
   gap: 4px;

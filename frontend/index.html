@@ -388,19 +388,24 @@
           </header>
 
           <form id="user-tasks-form" class="user-tasks-toolbar">
-            <input id="user-task-title" name="title" type="text" required maxlength="255" placeholder="What needs to be done?" class="user-tasks-toolbar__title" aria-label="Task title" />
-            <select id="user-task-assignee" name="assignee_id" aria-label="Assign to" class="user-tasks-toolbar__select"></select>
-            <select id="user-task-job" name="job_id" aria-label="Link to job" class="user-tasks-toolbar__select">
-              <option value="">No job</option>
-            </select>
-            <select id="user-task-category" name="category" aria-label="Category" class="user-tasks-toolbar__select">
-              <option value="general" selected>General</option>
-              <option value="sales">Sales</option>
-              <option value="construction">Construction</option>
-              <option value="warranty">Warranty</option>
-            </select>
-            <input id="user-task-note" name="note" type="text" maxlength="8000" placeholder="Optional note…" class="user-tasks-toolbar__note" aria-label="Optional note" />
-            <button type="submit" class="btn btn--primary user-tasks-toolbar__submit">Add task</button>
+            <details id="user-tasks-add-details" class="user-tasks-add-accordion">
+              <summary class="user-tasks-add-accordion__summary">+ Add Task</summary>
+              <div class="user-tasks-add-accordion__fields">
+                <input id="user-task-title" name="title" type="text" required maxlength="255" placeholder="What needs to be done?" class="user-tasks-toolbar__title" aria-label="Task title" />
+                <select id="user-task-assignee" name="assignee_id" aria-label="Assign to" class="user-tasks-toolbar__select"></select>
+                <select id="user-task-job" name="job_id" aria-label="Link to job" class="user-tasks-toolbar__select">
+                  <option value="">No job</option>
+                </select>
+                <select id="user-task-category" name="category" aria-label="Category" class="user-tasks-toolbar__select">
+                  <option value="general" selected>General</option>
+                  <option value="sales">Sales</option>
+                  <option value="construction">Construction</option>
+                  <option value="warranty">Warranty</option>
+                </select>
+                <input id="user-task-note" name="note" type="text" maxlength="8000" placeholder="Optional note…" class="user-tasks-toolbar__note" aria-label="Optional note" />
+                <button type="submit" class="btn btn--primary user-tasks-toolbar__submit">Add task</button>
+              </div>
+            </details>
           </form>
 
           <div class="user-tasks-tabs" role="tablist" aria-label="Task views">
