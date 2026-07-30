@@ -8,8 +8,8 @@ from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..deps.auth import get_current_user, require_roles
-from ..models import User, UserTask
-from ..repositories import user_tasks_repo, users_repo
+from ..models import Job, User, UserTask
+from ..repositories import jobs_repo, user_tasks_repo, users_repo
 from ..schemas import (
     UserTaskAttachmentRead,
     UserTaskCreate,
@@ -42,11 +42,21 @@ def _resolve_assignee(db: Session, assignee_id: Optional[int], current: User) ->
     return assignee
 
 
+def _resolve_job(db: Session, job_id: Optional[int]) -> Optional[Job]:
+    if job_id is None:
+        return None
+    job = jobs_repo.get_job(db, job_id)
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Job not found")
+    return job
+
+
 def _to_read(
     item: UserTask,
     *,
     creator_username: str | None = None,
     assignee_username: str | None = None,
+    job_label: str | None = None,
 ) -> UserTaskRead:
     attachments = [
         UserTaskAttachmentRead.model_validate(a) for a in (item.attachments or [])
@@ -66,6 +76,8 @@ def _to_read(
         updated_at=item.updated_at,
         creator_username=creator_username,
         assignee_username=assignee_username,
+        job_id=item.job_id,
+        job_label=job_label,
         attachments=attachments,
     )
 
@@ -77,6 +89,15 @@ def _usernames_for_task(db: Session, task: UserTask) -> tuple[str | None, str | 
         creator.username if creator else None,
         assignee.username if assignee else None,
     )
+
+
+def _job_label_for_task(db: Session, task: UserTask) -> str | None:
+    if task.job_id is None:
+        return None
+    job = db.get(Job, task.job_id)
+    if job is None:
+        return None
+    return job.customer_name
 
 
 def _get_task_or_404(db: Session, task_id: int) -> UserTask:
@@ -100,7 +121,14 @@ def list_my_user_tasks(
     out: List[UserTaskRead] = []
     for item in items:
         cname, aname = _usernames_for_task(db, item)
-        out.append(_to_read(item, creator_username=cname, assignee_username=aname))
+        out.append(
+            _to_read(
+                item,
+                creator_username=cname,
+                assignee_username=aname,
+                job_label=_job_label_for_task(db, item),
+            )
+        )
     return out
 
 
@@ -113,7 +141,14 @@ def list_created_user_tasks(
     out: List[UserTaskRead] = []
     for item in items:
         cname, aname = _usernames_for_task(db, item)
-        out.append(_to_read(item, creator_username=cname, assignee_username=aname))
+        out.append(
+            _to_read(
+                item,
+                creator_username=cname,
+                assignee_username=aname,
+                job_label=_job_label_for_task(db, item),
+            )
+        )
     return out
 
 
@@ -128,9 +163,39 @@ def list_all_user_tasks(
         db, assignee_id=assignee_id, creator_id=user_id
     )
     return [
-        _to_read(item, creator_username=cname, assignee_username=aname)
+        _to_read(
+            item,
+            creator_username=cname,
+            assignee_username=aname,
+            job_label=_job_label_for_task(db, item),
+        )
         for item, cname, aname in rows
     ]
+
+
+@router.get("/by-job/{job_id}", response_model=List[UserTaskRead])
+def list_user_tasks_for_job(
+    job_id: int,
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+) -> List[UserTaskRead]:
+    """Tasks (any assignee) linked to a Job, for the Job Card's Tasks section."""
+    job = jobs_repo.get_job(db, job_id)
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    items = user_tasks_repo.list_for_job(db, job_id)
+    out: List[UserTaskRead] = []
+    for item in items:
+        cname, aname = _usernames_for_task(db, item)
+        out.append(
+            _to_read(
+                item,
+                creator_username=cname,
+                assignee_username=aname,
+                job_label=job.customer_name,
+            )
+        )
+    return out
 
 
 @router.post("", response_model=UserTaskRead, status_code=status.HTTP_201_CREATED)
@@ -140,6 +205,7 @@ def create_user_task_route(
     current: User = Depends(get_current_user),
 ) -> UserTaskRead:
     assignee = _resolve_assignee(db, payload.assignee_id, current)
+    job = _resolve_job(db, payload.job_id)
     item = user_tasks_repo.create_task(
         db,
         creator_id=current.id,
@@ -147,13 +213,16 @@ def create_user_task_route(
         title=payload.title,
         note=payload.note,
         category=payload.category,
+        job_id=job.id if job else None,
     )
     if assignee.id != current.id:
         user_task_events.notify_assignee_assigned(
             db, task=item, actor_username=current.username
         )
     cname, aname = _usernames_for_task(db, item)
-    return _to_read(item, creator_username=cname, assignee_username=aname)
+    return _to_read(
+        item, creator_username=cname, assignee_username=aname, job_label=job.customer_name if job else None
+    )
 
 
 @router.patch("/{task_id}", response_model=UserTaskRead)
@@ -168,7 +237,9 @@ def update_user_task_route(
     raw = payload.model_dump(exclude_unset=True)
     if not raw:
         cname, aname = _usernames_for_task(db, task)
-        return _to_read(task, creator_username=cname, assignee_username=aname)
+        return _to_read(
+            task, creator_username=cname, assignee_username=aname, job_label=_job_label_for_task(db, task)
+        )
 
     prev_completed = task.completed
     prev_assignee_id = task.assignee_id
@@ -176,6 +247,10 @@ def update_user_task_route(
     if "assignee_id" in raw:
         assignee = _resolve_assignee(db, raw["assignee_id"], current)
         raw["assignee_id"] = assignee.id
+
+    if "job_id" in raw:
+        job = _resolve_job(db, raw["job_id"])
+        raw["job_id"] = job.id if job else None
 
     user_tasks_repo.update_task(db, task=task, fields=raw)
     db.refresh(task)
@@ -198,7 +273,9 @@ def update_user_task_route(
         )
 
     cname, aname = _usernames_for_task(db, task)
-    return _to_read(task, creator_username=cname, assignee_username=aname)
+    return _to_read(
+        task, creator_username=cname, assignee_username=aname, job_label=_job_label_for_task(db, task)
+    )
 
 
 @router.patch("/{task_id}/move", response_model=UserTaskRead)
@@ -226,7 +303,9 @@ def move_user_task_route(
         user_tasks_repo.move_task(db, task=task, direction=payload.direction)
     task = _get_task_or_404(db, task_id)
     cname, aname = _usernames_for_task(db, task)
-    return _to_read(task, creator_username=cname, assignee_username=aname)
+    return _to_read(
+        task, creator_username=cname, assignee_username=aname, job_label=_job_label_for_task(db, task)
+    )
 
 
 @router.delete("/{task_id}", status_code=status.HTTP_204_NO_CONTENT)

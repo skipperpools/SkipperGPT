@@ -2002,6 +2002,7 @@ const apiClient = {
   updateFeedback: (id, payload) => api(`/feedback/${id}`, { method: "PATCH", body: payload }),
   listMyUserTasks: () => api("/user-tasks/mine"),
   listCreatedUserTasks: () => api("/user-tasks/created"),
+  listUserTasksForJob: (jobId) => api(`/user-tasks/by-job/${jobId}`),
   listAllUserTasks: (assigneeId) => {
     const q = assigneeId != null ? `?assignee_id=${encodeURIComponent(assigneeId)}` : "";
     return api(`/user-tasks${q}`);
@@ -2714,6 +2715,124 @@ function renderJobNotesFeed(job) {
   ]);
 }
 
+/**
+ * "Linked Tasks" section on a Job Card's back face: shows/creates UserTasks
+ * (the "My tasks" system) tied to this job via job_id. Fetched lazily on
+ * first expand rather than embedded on the job payload, since the job list
+ * is polled frequently and most cards are never flipped open.
+ */
+function renderJobTasksFeed(job) {
+  const listWrap = el("div", { class: "job-tasks-feed__list" });
+
+  const summary = el("summary", { class: "job-tasks-feed__accordion-summary" }, "Linked Tasks");
+
+  const titleInput = el("input", {
+    type: "text",
+    class: "job-tasks-feed__composer-title",
+    maxlength: "255",
+    placeholder: "New task for this job…",
+    "aria-label": "New task title",
+    onclick: (e) => e.stopPropagation(),
+  });
+  const assigneeSel = el("select", {
+    class: "job-tasks-feed__composer-select",
+    "aria-label": "Assign to",
+    onclick: (e) => e.stopPropagation(),
+  });
+  const submitBtn = el(
+    "button",
+    { type: "button", class: "btn btn--primary btn--sm" },
+    "Add task"
+  );
+  const composerWrap = el("div", { class: "job-tasks-feed__composer-wrap" }, [
+    titleInput,
+    assigneeSel,
+    submitBtn,
+  ]);
+
+  const body = el("div", { class: "job-tasks-feed__body" }, [listWrap, composerWrap]);
+  const details = el("details", { class: "job-tasks-feed__accordion" }, [summary, body]);
+
+  const refresh = async () => {
+    listWrap.innerHTML = "";
+    listWrap.appendChild(el("p", { class: "job-tasks-feed__loading" }, "Loading…"));
+    try {
+      const items = await apiClient.listUserTasksForJob(job.id);
+      listWrap.innerHTML = "";
+      summary.textContent = `Linked Tasks (${items.length})`;
+      if (!items.length) {
+        listWrap.appendChild(
+          el("p", { class: "job-tasks-feed__empty" }, "No tasks linked to this job yet.")
+        );
+      } else {
+        for (const task of items) {
+          listWrap.appendChild(
+            renderUserTaskCard(task, refresh, {
+              showAssignee: true,
+              showCreator: true,
+              showJobBadge: false,
+              showJobPicker: true,
+            })
+          );
+        }
+      }
+    } catch (err) {
+      listWrap.innerHTML = "";
+      listWrap.appendChild(
+        el("p", { class: "job-tasks-feed__error" }, `Failed to load tasks: ${err.message}`)
+      );
+    }
+  };
+
+  let loaded = false;
+  let assigneesLoaded = false;
+  details.addEventListener("toggle", () => {
+    if (!details.open) return;
+    if (!assigneesLoaded) {
+      assigneesLoaded = true;
+      apiClient
+        .listAssignableUsers()
+        .then((users) => {
+          state.assignableUsers = users;
+          assigneeSel.innerHTML = "";
+          for (const u of users) {
+            const opt = el("option", { value: String(u.id) }, u.username);
+            if (state.user && u.id === state.user.id) opt.selected = true;
+            assigneeSel.appendChild(opt);
+          }
+        })
+        .catch(() => {});
+    }
+    if (!loaded) {
+      loaded = true;
+      refresh();
+    }
+  });
+
+  submitBtn.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    const title = String(titleInput.value || "").trim();
+    if (!title) {
+      toast("Title is required", "error");
+      return;
+    }
+    try {
+      const payload = { title, job_id: job.id };
+      const assigneeId = assigneeSel.value ? Number(assigneeSel.value) : null;
+      if (assigneeId) payload.assignee_id = assigneeId;
+      await apiClient.createUserTask(payload);
+      titleInput.value = "";
+      await refresh();
+      await refreshNotificationCounts();
+      toast("Task added", "success");
+    } catch (err) {
+      toast(`Failed to add task: ${err.message}`, "error");
+    }
+  });
+
+  return el("section", { class: "job-tasks-feed", "aria-label": "Job tasks" }, [details]);
+}
+
 function renderJobPhotos(job) {
   const ordered = getJobPhotosOrdered(job);
   const total = ordered.length;
@@ -3366,6 +3485,7 @@ function renderBack(job) {
       jobHasContacts(job) ? renderJobContacts(job) : null,
       renderJobDocs(job),
       renderJobNotesFeed(job),
+      renderJobTasksFeed(job),
       renderJobPhotos(job),
       renderJobSketches(job),
       customTaskTools,
@@ -5572,6 +5692,8 @@ function wireModal() {
     const noteRaw = String($("#user-task-note")?.value ?? "").trim();
     const assigneeRaw = $("#user-task-assignee")?.value;
     const assigneeId = assigneeRaw ? Number(assigneeRaw) : null;
+    const jobRaw = $("#user-task-job")?.value;
+    const jobId = jobRaw ? Number(jobRaw) : null;
     const category = String($("#user-task-category")?.value ?? "general").trim() || "general";
     if (!title) {
       toast("Title is required", "error");
@@ -5580,14 +5702,17 @@ function wireModal() {
     try {
       const payload = { title, note: noteRaw || null, category };
       if (assigneeId) payload.assignee_id = assigneeId;
+      if (jobId) payload.job_id = jobId;
       const created = await apiClient.createUserTask(payload);
       toast("Task added", "success");
       const titleEl = $("#user-task-title");
       const noteEl = $("#user-task-note");
       const categoryEl = $("#user-task-category");
+      const jobEl = $("#user-task-job");
       if (titleEl) titleEl.value = "";
       if (noteEl) noteEl.value = "";
       if (categoryEl) categoryEl.value = "general";
+      if (jobEl) jobEl.value = "";
       if (
         state.user &&
         created.assignee_id === state.user.id &&
@@ -6084,9 +6209,26 @@ function openUserTasksModal() {
   modal.hidden = false;
   switchUserTasksTab("mine");
   loadAssignableUsersForForm();
+  populateUserTaskJobSelect($("#user-task-job"));
   refreshUserTasksMineList();
   refreshUserTasksCreatedList();
   refreshCreatorTaskNotificationsList();
+}
+
+/** Fill a <select> with "No job" + active jobs, sorted by customer name. */
+function populateUserTaskJobSelect(sel, selectedJobId) {
+  if (!sel) return;
+  const current = selectedJobId ?? (sel.value ? Number(sel.value) : null);
+  sel.innerHTML = "";
+  sel.appendChild(el("option", { value: "" }, "No job"));
+  const jobs = [...state.jobs]
+    .filter((j) => !j.archived)
+    .sort((a, b) => (a.customer_name || "").localeCompare(b.customer_name || ""));
+  for (const j of jobs) {
+    const opt = el("option", { value: String(j.id) }, j.customer_name || `Job #${j.id}`);
+    if (current && j.id === current) opt.selected = true;
+    sel.appendChild(opt);
+  }
 }
 
 async function loadAssignableUsersForForm() {
@@ -6293,6 +6435,14 @@ function renderUserTaskRow(task, onRefresh, options = {}) {
       }, `From ${task.creator_username}`)
     );
   }
+  if (task.job_id && task.job_label) {
+    titleRow.appendChild(
+      el("span", {
+        class: "user-task-card__job-badge",
+        title: `Linked to job: ${task.job_label}`,
+      }, `🏊 ${task.job_label}`)
+    );
+  }
 
   const bodyChildren = [titleRow, categorySel, noteTa];
 
@@ -6422,7 +6572,13 @@ function renderUserTaskRow(task, onRefresh, options = {}) {
 // ---- Render: "My tasks" modal kanban board (near-fullscreen redesign) ----
 
 function renderUserTaskCard(task, onRefresh, options = {}) {
-  const { draggable = false, showAssignee = false, showCreator = false } = options;
+  const {
+    draggable = false,
+    showAssignee = false,
+    showCreator = false,
+    showJobBadge = true,
+    showJobPicker = true,
+  } = options;
 
   const card = el("div", {
     class: task.is_pinned ? "user-task-card user-task-card--pinned" : "user-task-card",
@@ -6505,6 +6661,21 @@ function renderUserTaskCard(task, onRefresh, options = {}) {
   }
   if (showAssignee && task.assignee_username) {
     metaParts.push(el("span", { class: "user-task-card__assigned-note" }, `→ ${task.assignee_username}`));
+  }
+  if (showJobBadge && task.job_id && task.job_label) {
+    metaParts.push(
+      el("button", {
+        type: "button",
+        class: "user-task-card__job-badge",
+        title: `Linked to job: ${task.job_label} — click to open`,
+        onclick: (e) => {
+          e.stopPropagation();
+          closeUserTasksModal();
+          closeUserTasksAdminModal();
+          openJobCardFromOverview(task.job_id);
+        },
+      }, `🏊 ${task.job_label}`)
+    );
   }
   if (task.is_pinned) {
     metaParts.push(el("span", { class: "user-task-card__pin-badge" }, "Pinned"));
@@ -6590,6 +6761,26 @@ function renderUserTaskCard(task, onRefresh, options = {}) {
       }
     });
     detailsChildren.push(assigneeSel);
+  }
+
+  if (showJobPicker) {
+    const jobSel = el("select", {
+      class: "user-task-card__job-select",
+      "aria-label": "Link to job",
+    });
+    populateUserTaskJobSelect(jobSel, task.job_id ?? null);
+    jobSel.addEventListener("change", async () => {
+      const jobId = jobSel.value ? Number(jobSel.value) : null;
+      if (jobId === (task.job_id ?? null)) return;
+      try {
+        await apiClient.updateUserTask(task.id, { job_id: jobId });
+        await onRefresh();
+      } catch (err) {
+        toast(err.message, "error");
+        jobSel.value = task.job_id ? String(task.job_id) : "";
+      }
+    });
+    detailsChildren.push(jobSel);
   }
 
   const attachmentsWrap = el("div", { class: "user-task__attachments" });

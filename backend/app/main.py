@@ -289,6 +289,16 @@ def _ensure_user_task_category_column() -> None:
             logger.info("Added column user_tasks.category")
 
 
+def _ensure_user_task_job_id_column() -> None:
+    """Add user_tasks.job_id if missing (existing DBs) — links a task to a Job Card."""
+    dialect = engine.dialect.name
+    with engine.begin() as conn:
+        cols = _user_tasks_column_names(conn, dialect)
+        if "job_id" not in cols:
+            conn.execute(text("ALTER TABLE user_tasks ADD COLUMN job_id INTEGER"))
+            logger.info("Added column user_tasks.job_id")
+
+
 def _ensure_user_push_enabled_column() -> None:
     dialect = engine.dialect.name
     with engine.begin() as conn:
@@ -402,6 +412,7 @@ def _on_startup() -> None:
     _ensure_user_task_assignee_column()
     _ensure_user_task_is_pinned_column()
     _ensure_user_task_category_column()
+    _ensure_user_task_job_id_column()
     _ensure_user_push_enabled_column()
     _ensure_new_user_task_tables()
     _ensure_job_document_category_column()

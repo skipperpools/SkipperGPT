@@ -390,6 +390,9 @@
           <form id="user-tasks-form" class="user-tasks-toolbar">
             <input id="user-task-title" name="title" type="text" required maxlength="255" placeholder="What needs to be done?" class="user-tasks-toolbar__title" aria-label="Task title" />
             <select id="user-task-assignee" name="assignee_id" aria-label="Assign to" class="user-tasks-toolbar__select"></select>
+            <select id="user-task-job" name="job_id" aria-label="Link to job" class="user-tasks-toolbar__select">
+              <option value="">No job</option>
+            </select>
             <select id="user-task-category" name="category" aria-label="Category" class="user-tasks-toolbar__select">
               <option value="general" selected>General</option>
               <option value="sales">Sales</option>

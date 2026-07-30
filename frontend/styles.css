@@ -31,6 +31,9 @@
   --section-photos-bg: #eef3f9;
   --section-photos-border: #bdd1ea;
   --section-photos-title: #245f94;
+  --section-job-tasks-bg: #fbf6ec;
+  --section-job-tasks-border: #e6d2a1;
+  --section-job-tasks-title: #8a6412;
 
   --status-not-started: #6b7682;
   --status-in-progress: #1f7ad6;
@@ -1365,6 +1368,71 @@ button.overview-row:last-child {
 .job-notes-feed__composer:focus {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
+}
+
+.job-tasks-feed {
+  border-left: 3px solid var(--section-job-tasks-border);
+  background: var(--section-job-tasks-bg);
+}
+.job-tasks-feed__accordion {
+  margin-top: 2px;
+}
+.job-tasks-feed__accordion-summary {
+  cursor: pointer;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--section-job-tasks-title);
+  user-select: none;
+}
+.job-tasks-feed__accordion-summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-radius: 4px;
+}
+.job-tasks-feed__body {
+  margin-top: 8px;
+}
+.job-tasks-feed__list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.job-tasks-feed__loading,
+.job-tasks-feed__error,
+.job-tasks-feed__empty {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  padding: 4px 0 8px;
+}
+.job-tasks-feed__error {
+  color: var(--status-issue);
+}
+.job-tasks-feed__composer-wrap {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.job-tasks-feed__composer-title {
+  flex: 1 1 180px;
+  min-width: 140px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 6px 8px;
+  background: #fff;
+  color: var(--text);
+}
+.job-tasks-feed__composer-select {
+  flex: 0 0 auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 6px 8px;
+  background: #fff;
+  color: var(--text);
 }
 
 .edit-job-contacts-block {
@@ -3275,7 +3343,8 @@ body.photo-viewer-open {
   color: var(--text-muted);
 }
 .user-task-card__from-badge,
-.user-task-card__pin-badge {
+.user-task-card__pin-badge,
+.user-task-card__job-badge {
   display: inline-flex;
   align-items: center;
   font-size: 0.6rem;
@@ -3290,6 +3359,14 @@ body.photo-viewer-open {
 }
 .user-task-card__pin-badge {
   background: var(--accent);
+}
+.user-task-card__job-badge {
+  background: var(--section-job-tasks-title, #8a6412);
+  border: none;
+  cursor: pointer;
+}
+.user-task-card__job-badge:hover {
+  filter: brightness(1.1);
 }
 .user-task-card__note-flag,
 .user-task-card__attach-flag {
@@ -3315,7 +3392,8 @@ body.photo-viewer-open {
   resize: vertical;
 }
 .user-task-card__category-select,
-.user-task-card__assignee-select {
+.user-task-card__assignee-select,
+.user-task-card__job-select {
   width: 100%;
   font-size: 0.78rem;
   padding: 5px 6px;

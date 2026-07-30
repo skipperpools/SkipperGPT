@@ -14,6 +14,7 @@ from typing import Iterable, List, Optional
 
 from sqlalchemy import delete as sql_delete
 from sqlalchemy import select
+from sqlalchemy import update as sql_update
 from sqlalchemy.orm import Session, selectinload
 
 from ..constants import MAX_JOB_CONTACTS, STATUS_NOT_STARTED, TASK_DEFINITIONS_BY_JOB_TYPE
@@ -27,6 +28,7 @@ from ..models import (
     JobSketch,
     JobTask,
     JobTypeTaskTemplate,
+    UserTask,
 )
 
 
@@ -274,6 +276,15 @@ def update_job(db: Session, *, job: Job, fields: dict) -> Job:
 
 
 def delete_job(db: Session, *, job: Job) -> None:
+    # UserTask.job_id has ondelete="SET NULL" at the model level, but hand-rolled
+    # SQLite ALTER TABLE migrations (see main.py) don't attach a real FK
+    # constraint to already-existing columns, so that ON DELETE action isn't
+    # guaranteed to fire on every deployment. Unlink explicitly so linked
+    # tasks reliably survive job deletion instead of dangling on a job_id
+    # that no longer resolves.
+    db.execute(
+        sql_update(UserTask).where(UserTask.job_id == job.id).values(job_id=None)
+    )
     db.delete(job)
     db.commit()
 

@@ -415,6 +415,16 @@ class UserTask(Base):
     completed_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # Optional link to the Job this task is about (e.g. "order tile for the
+    # Smith pool"). Nullable and SET NULL on job delete: a task belongs to its
+    # assignee first, and should survive losing its job reference rather than
+    # being deleted along with the job.
+    job_id: Mapped[Optional[int]] = mapped_column(
+        Integer,
+        ForeignKey("jobs.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -430,6 +440,7 @@ class UserTask(Base):
         foreign_keys=[user_id],
     )
     assignee: Mapped["User"] = relationship(foreign_keys=[assignee_id])
+    job: Mapped[Optional["Job"]] = relationship(foreign_keys=[job_id])
     attachments: Mapped[List["UserTaskAttachment"]] = relationship(
         back_populates="task",
         cascade="all, delete-orphan",

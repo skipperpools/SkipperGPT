@@ -513,6 +513,8 @@ class UserTaskRead(BaseModel):
     updated_at: datetime
     creator_username: Optional[str] = None
     assignee_username: Optional[str] = None
+    job_id: Optional[int] = None
+    job_label: Optional[str] = None
     attachments: List["UserTaskAttachmentRead"] = Field(default_factory=list)
 
 
@@ -534,6 +536,7 @@ class UserTaskCreate(BaseModel):
     note: Optional[str] = Field(None, max_length=USER_TASK_NOTE_MAX)
     assignee_id: Optional[int] = None
     category: str = USER_TASK_CATEGORY_GENERAL
+    job_id: Optional[int] = None
 
     @field_validator("category")
     @classmethod
@@ -551,6 +554,7 @@ class UserTaskUpdate(BaseModel):
     assignee_id: Optional[int] = None
     is_pinned: Optional[bool] = None
     category: Optional[str] = None
+    job_id: Optional[int] = None
 
     @field_validator("category")
     @classmethod

@@ -24,6 +24,17 @@ def list_for_assignee(db: Session, assignee_id: int) -> List[UserTask]:
     return list(db.execute(stmt).scalars().all())
 
 
+def list_for_job(db: Session, job_id: int) -> List[UserTask]:
+    """All tasks (any assignee) linked to a given job, for display on its Job Card."""
+    stmt = (
+        select(UserTask)
+        .options(selectinload(UserTask.attachments))
+        .where(UserTask.job_id == job_id)
+        .order_by(UserTask.completed.asc(), UserTask.created_at.asc(), UserTask.id.asc())
+    )
+    return list(db.execute(stmt).scalars().all())
+
+
 def list_created_by(db: Session, creator_id: int) -> List[UserTask]:
     """Tasks created by user and assigned to someone else (excludes self-assigned)."""
     stmt = (
@@ -99,6 +110,7 @@ def create_task(
     title: str,
     note: Optional[str] = None,
     category: str = "general",
+    job_id: Optional[int] = None,
 ) -> UserTask:
     task = UserTask(
         user_id=creator_id,
@@ -107,6 +119,7 @@ def create_task(
         note=note.strip() if note else None,
         sort_order=_next_sort_order(db, assignee_id),
         category=category,
+        job_id=job_id,
     )
     db.add(task)
     db.commit()
