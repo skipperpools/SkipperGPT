@@ -364,6 +364,16 @@ def _ensure_job_tasks_is_billable_column() -> None:
             logger.info("Added column job_tasks.is_billable")
 
 
+def _ensure_job_type_task_templates_seeded() -> None:
+    """Migrate each job_type's hardcoded default tasks into
+    job_type_task_templates once, so admins can add/delete/reorder the full
+    template (built-ins included) from the Task Templates modal."""
+    from .repositories import jobs_repo  # local import avoids a circular import at module load
+
+    with SessionLocal() as db:
+        jobs_repo.seed_default_task_templates(db)
+
+
 app = FastAPI(
     title="Skipper Pools - Job Card Dashboard",
     version="0.1.0",
@@ -417,6 +427,7 @@ def _on_startup() -> None:
     _ensure_new_user_task_tables()
     _ensure_job_document_category_column()
     _ensure_job_tasks_is_billable_column()
+    _ensure_job_type_task_templates_seeded()
     logger.info(
         "Skipper dashboard ready | env=%s dialect=%s db=%s",
         settings.app_env,

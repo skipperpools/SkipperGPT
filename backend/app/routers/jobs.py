@@ -33,6 +33,7 @@ from ..schemas import (
     JobTypeConvertRequest,
     JobTypeTaskTemplateCreate,
     JobTypeTaskTemplateRead,
+    JobTypeTaskTemplateUpdate,
     JobUpdate,
 )
 from ..services.job_disk_sync import sync_job_attachments_if_stale
@@ -127,6 +128,41 @@ def create_task_template(
         task_label=payload.task_label,
     )
     return row
+
+
+@router.patch("/job-type-task-templates/{template_id}", response_model=JobTypeTaskTemplateRead)
+def update_task_template(
+    template_id: int,
+    payload: JobTypeTaskTemplateUpdate,
+    _user: User = Depends(require_roles("admin", "office")),
+    db: Session = Depends(get_db),
+) -> JobTypeTaskTemplateRead:
+    row = jobs_repo.get_job_type_task_template(db, template_id)
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Template task not found")
+    if payload.task_label is not None:
+        row = jobs_repo.rename_job_type_task_template(db, row=row, task_label=payload.task_label)
+    if payload.target_index is not None:
+        jobs_repo.reorder_job_type_task_template(
+            db,
+            job_type=row.job_type,
+            template_id=row.id,
+            target_index=payload.target_index,
+        )
+        db.refresh(row)
+    return row
+
+
+@router.delete("/job-type-task-templates/{template_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_task_template(
+    template_id: int,
+    _user: User = Depends(require_roles("admin", "office")),
+    db: Session = Depends(get_db),
+) -> None:
+    row = jobs_repo.get_job_type_task_template(db, template_id)
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Template task not found")
+    jobs_repo.delete_job_type_task_template(db, row=row)
 
 
 @router.get("/{job_id}", response_model=JobRead)

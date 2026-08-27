@@ -17,7 +17,12 @@ from sqlalchemy import select
 from sqlalchemy import update as sql_update
 from sqlalchemy.orm import Session, selectinload
 
-from ..constants import MAX_JOB_CONTACTS, STATUS_NOT_STARTED, TASK_DEFINITIONS_BY_JOB_TYPE
+from ..constants import (
+    MAX_JOB_CONTACTS,
+    STATUS_NOT_STARTED,
+    TASK_DEFINITIONS_BY_JOB_TYPE,
+    VALID_JOB_TYPES,
+)
 from ..models import (
     Contact,
     Job,
@@ -28,6 +33,7 @@ from ..models import (
     JobSketch,
     JobTask,
     JobTypeTaskTemplate,
+    TaskTemplateSeed,
     UserTask,
 )
 
@@ -74,11 +80,58 @@ def list_job_type_task_templates(db: Session, *, job_type: str) -> List[JobTypeT
     return list(db.execute(stmt).scalars().all())
 
 
+def _job_type_templates_seeded(db: Session, *, job_type: str) -> bool:
+    """True once job_type's built-in default tasks have been migrated into
+    job_type_task_templates as real, editable rows (see seed_default_task_templates).
+    """
+    return db.get(TaskTemplateSeed, job_type) is not None
+
+
 def _task_definitions_for_job_type(db: Session, *, job_type: str) -> list[tuple[str, str]]:
+    if _job_type_templates_seeded(db, job_type=job_type):
+        # Fully migrated: job_type_task_templates is the single source of truth,
+        # in admin-controlled order. Built-in tasks an admin deleted stay deleted.
+        rows = list_job_type_task_templates(db, job_type=job_type)
+        return [(row.task_key, row.task_label) for row in rows]
+    # Not yet migrated (e.g. a fresh test DB that never ran app startup, or a
+    # brand new job_type before its first seeding pass): fall back to the old
+    # behavior of built-ins followed by whatever custom rows already exist.
     base = list(TASK_DEFINITIONS_BY_JOB_TYPE.get(job_type, []))
     custom = list_job_type_task_templates(db, job_type=job_type)
     base.extend((row.task_key, row.task_label) for row in custom)
     return base
+
+
+def seed_default_task_templates(db: Session) -> None:
+    """One-time-per-job-type migration: copy each job_type's hardcoded default
+    tasks into job_type_task_templates so admins can add/delete/reorder the
+    full template (built-ins included) from the Task Templates UI.
+
+    Idempotent and safe to call on every app startup: once a job_type has a
+    TaskTemplateSeed row, this is a no-op for it forever, even if an admin
+    later deletes some or all of its built-in template rows.
+    """
+    for job_type in VALID_JOB_TYPES:
+        if _job_type_templates_seeded(db, job_type=job_type):
+            continue
+        defs = TASK_DEFINITIONS_BY_JOB_TYPE.get(job_type, [])
+        existing = list_job_type_task_templates(db, job_type=job_type)
+        existing_keys = {row.task_key for row in existing}
+        missing = [(k, label) for k, label in defs if k not in existing_keys]
+        if missing:
+            for row in existing:
+                row.sort_order += len(missing)
+            for i, (task_key, task_label) in enumerate(missing):
+                db.add(
+                    JobTypeTaskTemplate(
+                        job_type=job_type,
+                        task_key=task_key,
+                        task_label=task_label,
+                        sort_order=i,
+                    )
+                )
+        db.add(TaskTemplateSeed(job_type=job_type))
+        db.commit()
 
 
 def seeded_task_keys_for_job_type(db: Session, *, job_type: str) -> set[str]:
@@ -136,6 +189,51 @@ def add_job_type_task_template(
     db.commit()
     db.refresh(row)
     return row
+
+
+def get_job_type_task_template(db: Session, template_id: int) -> Optional[JobTypeTaskTemplate]:
+    return db.get(JobTypeTaskTemplate, template_id)
+
+
+def rename_job_type_task_template(
+    db: Session, *, row: JobTypeTaskTemplate, task_label: str
+) -> JobTypeTaskTemplate:
+    row.task_label = task_label.strip()
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def reorder_job_type_task_template(
+    db: Session, *, job_type: str, template_id: int, target_index: int
+) -> bool:
+    """Move a template row to target_index (0-based) within its job_type's
+    template list. Returns True when the order actually changed."""
+    rows = list_job_type_task_templates(db, job_type=job_type)
+    idx = next((i for i, row in enumerate(rows) if row.id == template_id), -1)
+    if idx < 0:
+        return False
+    clamped = max(0, min(target_index, len(rows) - 1))
+    if idx == clamped:
+        return False
+    row = rows.pop(idx)
+    rows.insert(clamped, row)
+    for i, row_item in enumerate(rows):
+        row_item.sort_order = i
+    db.commit()
+    return True
+
+
+def delete_job_type_task_template(db: Session, *, row: JobTypeTaskTemplate) -> None:
+    """Delete a template row and compact remaining sort_order values for its
+    job_type. Does not touch any job already created from this template."""
+    job_type = row.job_type
+    db.delete(row)
+    db.flush()
+    remaining = list_job_type_task_templates(db, job_type=job_type)
+    for i, row_item in enumerate(remaining):
+        row_item.sort_order = i
+    db.commit()
 
 
 def list_jobs(db: Session, *, include_archived: bool = False) -> List[Job]:

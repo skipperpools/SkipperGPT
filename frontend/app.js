@@ -1990,6 +1990,10 @@ const apiClient = {
     api(`/jobs/job-type-task-templates?job_type=${encodeURIComponent(jobType)}`),
   createTaskTemplate: (payload) =>
     api("/jobs/job-type-task-templates", { method: "POST", body: payload }),
+  updateTaskTemplate: (id, payload) =>
+    api(`/jobs/job-type-task-templates/${id}`, { method: "PATCH", body: payload }),
+  deleteTaskTemplate: (id) =>
+    api(`/jobs/job-type-task-templates/${id}`, { method: "DELETE" }),
   updateTask: (id, taskKey, payload) =>
     api(`/jobs/${id}/tasks/${encodeURIComponent(taskKey)}`, { method: "PATCH", body: payload }),
   listUsers: () => api("/users"),
@@ -7446,6 +7450,135 @@ function closeTaskTemplatesModal() {
   if (modal) modal.hidden = true;
 }
 
+function taskTemplateDragAfterElement(listEl, clientY) {
+  const rows = [
+    ...listEl.querySelectorAll(":scope > .task-templates__item:not(.task-templates__item--dragging)"),
+  ];
+  return rows.reduce(
+    (closest, child) => {
+      const box = child.getBoundingClientRect();
+      const offset = clientY - box.top - box.height / 2;
+      if (offset < 0 && offset > closest.offset) {
+        return { offset, element: child };
+      }
+      return closest;
+    },
+    { offset: Number.NEGATIVE_INFINITY, element: null }
+  ).element;
+}
+
+function attachTaskTemplateDragDrop(listEl) {
+  if (!listEl || listEl.dataset.dndAttached === "1") return;
+  listEl.dataset.dndAttached = "1";
+
+  let dragState = null;
+
+  const getRows = () => [...listEl.querySelectorAll(":scope > .task-templates__item")];
+
+  const clearDropTargets = () => {
+    getRows().forEach((row) => row.classList.remove("task-templates__item--drop-target"));
+  };
+
+  const cleanupDragUi = () => {
+    if (dragState?.autoScrollId) cancelAnimationFrame(dragState.autoScrollId);
+    listEl.classList.remove("task-templates__list--dragging");
+    if (dragState?.row) dragState.row.classList.remove("task-templates__item--dragging");
+    clearDropTargets();
+  };
+
+  const maybeAutoScroll = (clientY) => {
+    const scroller = listEl.closest("#task-templates-modal-body");
+    if (!scroller) return;
+    const { top, bottom } = scroller.getBoundingClientRect();
+    const margin = 36;
+    if (clientY < top + margin) scroller.scrollTop -= 10;
+    else if (clientY > bottom - margin) scroller.scrollTop += 10;
+  };
+
+  const finishDrag = async (commit) => {
+    if (!dragState) return;
+    const { row, startIndex, pointerId } = dragState;
+    const finalIndex = getRows().indexOf(row);
+    cleanupDragUi();
+    dragState = null;
+
+    try {
+      const handle = row?.querySelector(".task-templates__drag-handle");
+      if (handle?.hasPointerCapture?.(pointerId)) handle.releasePointerCapture(pointerId);
+    } catch (_) {
+      /* ignore */
+    }
+
+    if (!commit || finalIndex < 0 || finalIndex === startIndex) {
+      if (!commit) await refreshTaskTemplatesModal();
+      return;
+    }
+
+    const templateId = row.dataset.templateId;
+    if (!templateId) return;
+
+    try {
+      await apiClient.updateTaskTemplate(templateId, { target_index: finalIndex });
+      await refreshTaskTemplatesModal();
+    } catch (err) {
+      toast(`Failed to reorder template task: ${err.message}`, "error");
+      await refreshTaskTemplatesModal();
+    }
+  };
+
+  listEl.addEventListener("pointerdown", (e) => {
+    const handle = e.target.closest(".task-templates__drag-handle");
+    if (!handle || !listEl.contains(handle)) return;
+    e.preventDefault();
+    e.stopPropagation();
+
+    const row = handle.closest(".task-templates__item");
+    if (!row) return;
+
+    dragState = {
+      row,
+      startIndex: getRows().indexOf(row),
+      pointerId: e.pointerId,
+      autoScrollId: null,
+    };
+
+    row.classList.add("task-templates__item--dragging");
+    listEl.classList.add("task-templates__list--dragging");
+    handle.setPointerCapture(e.pointerId);
+  });
+
+  listEl.addEventListener("pointermove", (e) => {
+    if (!dragState || e.pointerId !== dragState.pointerId) return;
+    e.preventDefault();
+    e.stopPropagation();
+
+    const { row } = dragState;
+    const afterElement = taskTemplateDragAfterElement(listEl, e.clientY);
+    clearDropTargets();
+    if (afterElement) {
+      afterElement.classList.add("task-templates__item--drop-target");
+      listEl.insertBefore(row, afterElement);
+    } else {
+      listEl.appendChild(row);
+    }
+
+    if (dragState.autoScrollId) cancelAnimationFrame(dragState.autoScrollId);
+    dragState.autoScrollId = requestAnimationFrame(() => maybeAutoScroll(e.clientY));
+  });
+
+  listEl.addEventListener("pointerup", (e) => {
+    if (!dragState || e.pointerId !== dragState.pointerId) return;
+    e.preventDefault();
+    e.stopPropagation();
+    void finishDrag(true);
+  });
+
+  listEl.addEventListener("pointercancel", (e) => {
+    if (!dragState || e.pointerId !== dragState.pointerId) return;
+    void finishDrag(false);
+  });
+}
+
 async function refreshTaskTemplatesModal() {
   const body = $("#task-templates-modal-body");
   if (!body) return;
@@ -7462,10 +7595,51 @@ async function refreshTaskTemplatesModal() {
       ]);
       const list = el("ul", { class: "task-templates__list" });
       if (!rows.length) {
-        list.appendChild(el("li", { class: "task-templates__empty" }, "No custom template tasks yet."));
+        list.appendChild(el("li", { class: "task-templates__empty" }, "No template tasks yet."));
       } else {
         for (const row of rows) {
-          list.appendChild(el("li", { class: "task-templates__item" }, row.task_label));
+          list.appendChild(
+            el(
+              "li",
+              {
+                class: "task-templates__item",
+                "data-template-id": String(row.id),
+              },
+              [
+                el(
+                  "button",
+                  {
+                    type: "button",
+                    class: "task-templates__drag-handle",
+                    "aria-label": `Reorder ${row.task_label}`,
+                    title: "Drag to reorder",
+                  },
+                  [createTaskDragHandleIcon()]
+                ),
+                el("span", { class: "task-templates__item-label" }, row.task_label),
+                el(
+                  "button",
+                  {
+                    type: "button",
+                    class: "task-templates__delete-btn",
+                    "aria-label": `Delete ${row.task_label}`,
+                    title: "Delete this template task",
+                    onclick: async () => {
+                      if (!window.confirm(`Delete "${row.task_label}" from this template?`)) return;
+                      try {
+                        await apiClient.deleteTaskTemplate(row.id);
+                        toast("Template task deleted", "success");
+                        await refreshTaskTemplatesModal();
+                      } catch (err) {
+                        toast(`Failed to delete template task: ${err.message}`, "error");
+                      }
+                    },
+                  },
+                  "×"
+                ),
+              ]
+            )
+          );
         }
       }
       const addRow = el("div", { class: "task-templates__add" }, [
@@ -7501,6 +7675,7 @@ async function refreshTaskTemplatesModal() {
       section.appendChild(list);
       section.appendChild(addRow);
       body.appendChild(section);
+      attachTaskTemplateDragDrop(list);
     }
   } catch (err) {
     body.textContent = "";

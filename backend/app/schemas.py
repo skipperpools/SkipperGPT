@@ -380,6 +380,17 @@ class JobTypeTaskTemplateRead(BaseModel):
     created_at: datetime
 
 
+class JobTypeTaskTemplateUpdate(BaseModel):
+    task_label: Optional[str] = Field(None, min_length=1, max_length=128)
+    target_index: Optional[int] = Field(None, ge=0)
+
+    @model_validator(mode="after")
+    def _validate_update_payload(self) -> "JobTypeTaskTemplateUpdate":
+        if self.task_label is None and self.target_index is None:
+            raise ValueError("Provide at least one of task_label or target_index")
+        return self
+
+
 class JobTypeConvertRequest(BaseModel):
     target_job_type: str = Field(..., min_length=1, max_length=32)
 

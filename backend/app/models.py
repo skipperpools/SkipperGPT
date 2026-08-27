@@ -252,6 +252,21 @@ class JobTypeTaskTemplate(Base):
     )
 
 
+class TaskTemplateSeed(Base):
+    """Marks a job_type as having had its built-in default tasks migrated into
+    job_type_task_templates. Once a job_type is marked seeded, its built-in
+    tasks live purely as editable rows in that table (admins may rename,
+    reorder, or delete them there) and are never re-inserted automatically,
+    even if an admin deletes all of them."""
+
+    __tablename__ = "task_template_seeds"
+
+    job_type: Mapped[str] = mapped_column(String(32), primary_key=True)
+    seeded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
 class JobDocument(Base):
     __tablename__ = "job_documents"
 
