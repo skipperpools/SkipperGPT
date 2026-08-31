@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from typing import List, Optional
 
 from ..constants import (
+    BILLING_NOTIFICATION_TASK_KEYS,
     DOC_CATEGORY_FIELD,
     STATUS_COMPLETED,
     STATUS_IN_PROGRESS,
@@ -43,6 +44,17 @@ def _parse_iso_date_from_task_value(value: Optional[str]) -> Optional[datetime]:
         return None
     y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
     return datetime(y, mo, d, 12, 0, 0, tzinfo=timezone.utc)
+
+
+def _task_to_read(task: JobTask) -> JobTaskRead:
+    """Build the API task payload. A task reads as billable if it's either
+    explicitly flagged on the row (custom tasks added as billable) or one of
+    the fixed built-in milestones that triggers a Billing Notification when
+    completed (see BILLING_NOTIFICATION_TASK_KEYS) - those built-in tasks
+    have no per-job is_billable flag of their own to set."""
+    read = JobTaskRead.model_validate(task)
+    read.is_billable = bool(task.is_billable) or task.task_key in BILLING_NOTIFICATION_TASK_KEYS
+    return read
 
 
 def _compute_progress(tasks: List[JobTask]) -> JobProgress:
@@ -179,7 +191,7 @@ def to_job_read(job: Job) -> JobRead:
         archived=job.archived,
         created_at=job.created_at,
         updated_at=job.updated_at,
-        tasks=[JobTaskRead.model_validate(t) for t in tasks_sorted],
+        tasks=[_task_to_read(t) for t in tasks_sorted],
         documents=documents,
         photos=photos,
         sketches=sketches,
