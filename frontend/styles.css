@@ -1936,16 +1936,17 @@ button.overview-row:last-child {
 .task__billable-badge {
   display: inline-flex;
   align-items: center;
-  font-size: 0.65rem;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  font-size: 0.66rem;
   font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: #fff;
-  background: var(--accent, #2563eb);
-  border-radius: 4px;
-  padding: 1px 6px;
-  line-height: 1.6;
+  line-height: 1;
+  color: var(--accent, #1ea7c4);
+  background: #e2f2f5;
+  border-radius: 50%;
   flex-shrink: 0;
+  cursor: default;
 }
 
 /* ---------- Custom Task Dialog ---------- */

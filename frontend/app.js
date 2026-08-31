@@ -3802,7 +3802,17 @@ function renderTaskRow(job, task, taskIndex, totalTasks) {
     el("div", { class: "task__main" }, [
       el("div", { class: "task__label" }, [
         el("span", {}, task.task_label),
-        task.is_billable ? el("span", { class: "task__billable-badge", title: "Billable" }, "Billable") : null,
+        task.is_billable
+          ? el(
+              "span",
+              {
+                class: "task__billable-badge",
+                title: "Billable task",
+                "aria-label": "Billable task",
+              },
+              "$"
+            )
+          : null,
         taskActions,
       ]),
       el("div", { class: "task__inputs" }, [dateWrap, noteInput]),
@@ -4035,9 +4045,7 @@ function reorderCardsByCompletion() {
 
 function openJobCardFromOverview(jobId) {
   const id = Number(jobId);
-  state.filter = "";
-  const searchInput = $("#search");
-  if (searchInput) searchInput.value = "";
+  clearSearchFilter();
   state.view = "cards";
   renderAll();
   requestAnimationFrame(() => {
@@ -4427,11 +4435,21 @@ function renderAll() {
   syncMobileCardHistoryAfterOverlayClosed();
 }
 
+function clearSearchFilter() {
+  state.filter = "";
+  const searchInput = $("#search");
+  if (searchInput) searchInput.value = "";
+}
+
 function jobMatchesActiveFilters(job, q) {
-  const matchesSearch = !q || jobSearchHay(job).includes(q);
+  // A live search query searches every job the user can see, regardless of
+  // which Job Type pill is active; the pill only narrows results when the
+  // search box is empty. state.jobs is already scoped server-side to the
+  // job types (and archived/non-archived view) this user is permitted to see.
+  if (q) return jobSearchHay(job).includes(q);
   const activeType = state.jobTypeFilter || "all";
-  if (activeType === "all") return matchesSearch;
-  return matchesSearch && normalizeJobType(job.job_type) === activeType;
+  if (activeType === "all") return true;
+  return normalizeJobType(job.job_type) === activeType;
 }
 
 function applyFilter() {
@@ -7899,6 +7917,7 @@ function wireJobTypeTabs() {
   for (const btn of $$("[data-job-type-filter]")) {
     btn.addEventListener("click", async () => {
       const selected = btn.dataset.jobTypeFilter || "all";
+      clearSearchFilter();
       if (selected === "archived") {
         if (!canViewArchivedJobs()) return;
         state.includeArchived = true;
