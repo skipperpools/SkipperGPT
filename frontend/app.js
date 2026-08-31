@@ -3801,18 +3801,20 @@ function renderTaskRow(job, task, taskIndex, totalTasks) {
     checkbox,
     el("div", { class: "task__main" }, [
       el("div", { class: "task__label" }, [
-        el("span", {}, task.task_label),
-        task.is_billable
-          ? el(
-              "span",
-              {
-                class: "task__billable-badge",
-                title: "Billable task",
-                "aria-label": "Billable task",
-              },
-              "$"
-            )
-          : null,
+        el("span", { class: "task__label-text" }, [
+          task.task_label,
+          task.is_billable
+            ? el(
+                "span",
+                {
+                  class: "task__billable-badge",
+                  title: "Billable task",
+                  "aria-label": "Billable task",
+                },
+                "$"
+              )
+            : null,
+        ]),
         taskActions,
       ]),
       el("div", { class: "task__inputs" }, [dateWrap, noteInput]),
