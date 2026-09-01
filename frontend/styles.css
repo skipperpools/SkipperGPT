@@ -865,6 +865,28 @@ button.overview-row:last-child {
   color: var(--text-muted);
 }
 
+.card__recent-notes-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--border);
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.card__recent-notes-cta-arrow {
+  font-size: 1rem;
+  line-height: 1;
+  transition: transform 0.15s ease;
+}
+
+.card__recent-notes--interactive:hover .card__recent-notes-cta-arrow {
+  transform: translateX(2px);
+}
+
 .card__recent-notes-list {
   list-style: none;
   margin: 0;

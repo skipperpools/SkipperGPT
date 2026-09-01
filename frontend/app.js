@@ -204,8 +204,7 @@ function renderRecentJobNotesPreview(job) {
   const children = [el("span", { class: "card__section-label" }, labelText)];
 
   if (!recent.length) {
-    const emptyHint =
-      total > 0 ? "Notes have no text — tap to open" : "No notes yet — tap to add";
+    const emptyHint = total > 0 ? "Notes have no text" : "No notes yet";
     children.push(el("p", { class: "card__recent-notes__empty-hint" }, emptyHint));
   } else {
     const list = el("ul", { class: "card__recent-notes-list" });
@@ -231,6 +230,14 @@ function renderRecentJobNotesPreview(job) {
       );
     }
   }
+
+  const ctaText = total > 0 ? "Tap to read all notes" : "Tap to add a note";
+  children.push(
+    el("span", { class: "card__recent-notes-cta" }, [
+      ctaText,
+      el("span", { class: "card__recent-notes-cta-arrow", "aria-hidden": "true" }, "›"),
+    ])
+  );
 
   const customer = job.customer_name || "job";
   return el(
