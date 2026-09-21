@@ -111,7 +111,7 @@ def ensure_photo_thumbnail(docs_root: Path, stored_path: str) -> Path | None:
             im.thumbnail((_THUMB_MAX, _THUMB_MAX), Image.Resampling.LANCZOS)
             im = _prepare_rgb_for_webp(im)
             _atomic_write_webp(thumb_abs, im)
-    except (UnidentifiedImageError, OSError, ValueError) as exc:
+    except (UnidentifiedImageError, OSError, ValueError, Image.DecompressionBombError) as exc:
         logger.warning("Photo thumbnail failed for %s: %s", stored_path, exc)
         return None
 
@@ -154,7 +154,7 @@ def ensure_photo_display(docs_root: Path, stored_path: str) -> Path | None:
             im.thumbnail((_DISPLAY_MAX, _DISPLAY_MAX), Image.Resampling.LANCZOS)
             im = _prepare_rgb_for_webp(im)
             _atomic_write_webp(display_abs, im, quality=_DISPLAY_WEBP_QUALITY)
-    except (UnidentifiedImageError, OSError, ValueError) as exc:
+    except (UnidentifiedImageError, OSError, ValueError, Image.DecompressionBombError) as exc:
         logger.warning("Photo display failed for %s: %s", stored_path, exc)
         return None
 

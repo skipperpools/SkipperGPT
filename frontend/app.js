@@ -1881,6 +1881,42 @@ async function loginRequest(username, password) {
 const UPLOAD_STALL_MS = 45_000;
 const UPLOAD_ABSOLUTE_MAX_MS = 15 * 60_000;
 
+// Phone cameras (esp. Samsung 50/200MP) produce huge files that are slow on cell service and can
+// trip server size/pixel limits. Downscale big photos in the browser before uploading. Any failure
+// (HEIC the browser can't decode, no canvas support, etc.) falls back to the original file.
+const PHOTO_RESIZE_MAX_EDGE = 3000;
+const PHOTO_RESIZE_MIN_BYTES = 3 * 1024 * 1024;
+
+async function prepareJobPhotoForUpload(file) {
+  try {
+    const type = (file.type || "").toLowerCase();
+    // Leave GIFs alone (animation) and small files alone.
+    if (type === "image/gif" || file.size < PHOTO_RESIZE_MIN_BYTES) return file;
+    if (typeof createImageBitmap !== "function") return file;
+    const bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
+    try {
+      const scale = Math.min(1, PHOTO_RESIZE_MAX_EDGE / Math.max(bitmap.width, bitmap.height));
+      if (scale >= 1 && file.size < 10 * 1024 * 1024) return file;
+      const w = Math.max(1, Math.round(bitmap.width * scale));
+      const h = Math.max(1, Math.round(bitmap.height * scale));
+      const canvas = document.createElement("canvas");
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return file;
+      ctx.drawImage(bitmap, 0, 0, w, h);
+      const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.88));
+      if (!blob || blob.size >= file.size) return file;
+      const base = (file.name || "photo").replace(/\.[^./\\]+$/, "") || "photo";
+      return new File([blob], `${base}.jpg`, { type: "image/jpeg", lastModified: file.lastModified });
+    } finally {
+      bitmap.close?.();
+    }
+  } catch {
+    return file;
+  }
+}
+
 function uploadJobPhotoWithProgress(jobId, file, onProgress) {
   return new Promise((resolve, reject) => {
     const fd = new FormData();
@@ -2154,7 +2190,8 @@ async function uploadJobPhotosSequential(jobId, files, onProgress) {
   for (let i = 0; i < list.length; i++) {
     const file = list[i];
     try {
-      lastUpdated = await apiClient.uploadJobPhoto(jobId, file, (fraction) => {
+      const prepared = await prepareJobPhotoForUpload(file);
+      lastUpdated = await apiClient.uploadJobPhoto(jobId, prepared, (fraction) => {
         onProgress?.(i, list.length, fraction);
       });
       replaceJob(lastUpdated);

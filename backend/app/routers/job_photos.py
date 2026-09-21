@@ -8,6 +8,7 @@ from typing import List
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse
 from PIL import Image, UnidentifiedImageError
+from PIL.Image import DecompressionBombError
 from sqlalchemy.orm import Session
 
 try:
@@ -84,6 +85,16 @@ def _magic_image_ok(data: bytes, ext: str) -> bool:
     return False
 
 
+def _sniff_image_ext(data: bytes) -> str | None:
+    """Detect the real image type from magic bytes (used when the filename has no usable extension)."""
+    for ext in (".jpg", ".png", ".gif", ".webp"):
+        if _magic_image_ok(data, ext):
+            return ext
+    if _magic_heif_ok(data):
+        return ".heic"
+    return None
+
+
 def _convert_heif_bytes_to_jpeg(data: bytes) -> bytes:
     if not _HEIF_SUPPORT:
         raise HTTPException(
@@ -96,6 +107,11 @@ def _convert_heif_bytes_to_jpeg(data: bytes) -> bytes:
             out = io.BytesIO()
             rgb.save(out, format="JPEG", quality=90, optimize=True)
             return out.getvalue()
+    except DecompressionBombError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Photo resolution is too high. Lower the camera resolution or resize the photo and try again.",
+        ) from exc
     except (UnidentifiedImageError, OSError, ValueError) as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -131,14 +147,14 @@ async def upload_job_photo(
 
     orig = (file.filename or "photo.jpg").strip()
     ext = Path(orig).suffix.lower()
-    if ext not in _EXT_TO_CT:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Only JPG, PNG, WebP, GIF, HEIC, or HEIF files are allowed",
-        )
+    if ext == ".jpe" or ext == ".jfif":
+        ext = ".jpg"
 
+    # Android pickers (Samsung Gallery / Google Photos) sometimes send odd content types
+    # ("image/jpg", "image/pjpeg") or names with no extension. The magic-byte check below is the
+    # real gate, so only refuse content types that are clearly not images.
     ct = (file.content_type or "").lower().strip()
-    if ct and ct not in _VALID_CONTENT_TYPES and ct != "application/octet-stream":
+    if ct and not (ct.startswith("image/") or ct in {"application/octet-stream", "binary/octet-stream"}):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="File must be a supported image type",
@@ -150,6 +166,16 @@ async def upload_job_photo(
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail=f"File too large (max {settings.max_upload_mb} MB)",
+        )
+
+    # Trust the bytes over the filename: fix missing/wrong extensions.
+    sniffed = _sniff_image_ext(data)
+    if sniffed is not None and (ext not in _EXT_TO_CT or not _magic_image_ok(data, ext)):
+        ext = sniffed
+    if ext not in _EXT_TO_CT:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only JPG, PNG, WebP, GIF, HEIC, or HEIF files are allowed",
         )
     if not _magic_image_ok(data, ext):
         raise HTTPException(
