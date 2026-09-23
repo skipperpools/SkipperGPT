@@ -1266,7 +1266,16 @@ function urlBase64ToUint8Array(base64String) {
 
 async function registerPushSubscription() {
   if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
-    toast("Push notifications are not supported in this browser", "error");
+    // iPhone/iPad Safari only exposes push to Home Screen apps.
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+      (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+    const standalone = window.navigator.standalone === true ||
+      window.matchMedia("(display-mode: standalone)").matches;
+    if (isIOS && !standalone) {
+      toast("On iPhone: tap Share → Add to Home Screen, open Skipper from the Home Screen, then turn on push here", "error");
+    } else {
+      toast("Push notifications are not supported in this browser", "error");
+    }
     return false;
   }
   const perm = await Notification.requestPermission();

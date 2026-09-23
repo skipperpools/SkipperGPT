@@ -4200,3 +4200,9 @@ body.sketch-editor-open {
 @media (prefers-reduced-motion: reduce) {
   .topbar__menu { animation: none; }
 }
+
+/* Home Screen app on iPhone (black-translucent status bar): keep the
+   topbar clear of the notch / status bar. No-op in a normal browser tab. */
+@media (display-mode: standalone) {
+  .topbar { padding-top: calc(14px + env(safe-area-inset-top, 0px)); }
+}

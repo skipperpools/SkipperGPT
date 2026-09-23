@@ -4,6 +4,14 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#0b3d62" />
+    <!-- Installable web app: required for push on iPhone (iOS 16.4+ only
+         allows web push for sites added to the Home Screen). -->
+    <link rel="manifest" href="/manifest.json" />
+    <link rel="apple-touch-icon" href="/graphics/apple-touch-icon.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Skipper" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <link rel="icon" type="image/x-icon" href="/graphics/favicon.ico" />
     <link rel="alternate icon" href="/graphics/favicon.ico" />
     <title>Skipper Pools - Job Card Dashboard</title>
@@ -582,6 +590,7 @@
             <button class="topbar__menu-item mobile-user-menu-modal__item" type="button" role="menuitem" data-menu-action="new-job">+ New Job</button>
             <button class="topbar__menu-item mobile-user-menu-modal__item" type="button" role="menuitem" data-menu-action="feedback">Requests</button>
             <button class="topbar__menu-item mobile-user-menu-modal__item" type="button" role="menuitem" data-menu-action="user-tasks">My tasks</button>
+            <button class="topbar__menu-item mobile-user-menu-modal__item" type="button" role="menuitem" data-menu-action="push-toggle">Push notifications: Off</button>
             <button class="topbar__menu-item mobile-user-menu-modal__item" type="button" role="menuitem" data-menu-action="notifications" hidden>
               Billing notifications
             </button>
