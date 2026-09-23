@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..deps.auth import get_current_user, require_roles
+from ..deps.auth import get_current_user, require_roles, enforce_job_type_access
 from ..models import Job, User, UserTask
 from ..repositories import jobs_repo, user_tasks_repo, users_repo
 from ..schemas import (
@@ -19,7 +19,7 @@ from ..schemas import (
 )
 from ..services import user_task_events
 
-router = APIRouter(prefix="/api/user-tasks", tags=["user-tasks"])
+router = APIRouter(prefix="/api/user-tasks", tags=["user-tasks"], dependencies=[Depends(enforce_job_type_access)])
 _admin = Depends(require_roles("admin"))
 
 

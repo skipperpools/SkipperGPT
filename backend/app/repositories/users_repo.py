@@ -6,7 +6,8 @@ from typing import List, Optional
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from ..models import User
+from ..constants import ROLE_JOB_TYPES
+from ..models import User, UserJobTypeGrant
 
 
 def count_users(db: Session) -> int:
@@ -49,17 +50,42 @@ def create_user(
     username: str,
     hashed_password: str,
     role: str,
+    job_type_grants: Optional[List[str]] = None,
 ) -> User:
     user = User(username=username, hashed_password=hashed_password, role=role)
+    if job_type_grants:
+        _apply_job_type_grants(user, job_type_grants)
     db.add(user)
     db.commit()
     db.refresh(user)
     return user
 
 
-def update_user(db: Session, *, user: User, fields: dict) -> User:
+def _apply_job_type_grants(user: User, job_types: Optional[List[str]]) -> None:
+    """Replace the user's grants. When job_types is None, keep the current set.
+    Grants the (possibly new) role already covers are dropped, so only access
+    beyond the role is stored and a role change never leaves stale extras."""
+    wanted = set(user.job_type_grants if job_types is None else job_types)
+    wanted -= ROLE_JOB_TYPES.get(user.role, frozenset())
+    current = {g.job_type: g for g in user.job_type_grant_rows}
+    for jt, row in current.items():
+        if jt not in wanted:
+            user.job_type_grant_rows.remove(row)
+    for jt in sorted(wanted - current.keys()):
+        user.job_type_grant_rows.append(UserJobTypeGrant(job_type=jt))
+
+
+def update_user(
+    db: Session,
+    *,
+    user: User,
+    fields: dict,
+    job_type_grants: Optional[List[str]] = None,
+) -> User:
     for key, value in fields.items():
         setattr(user, key, value)
+    if job_type_grants is not None or "role" in fields:
+        _apply_job_type_grants(user, job_type_grants)
     db.commit()
     db.refresh(user)
     return user

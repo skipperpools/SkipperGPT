@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from ..config import settings
 from ..constants import DOC_CATEGORY_FIELD, VALID_DOC_CATEGORIES
 from ..database import SessionLocal, get_db
-from ..deps.auth import get_current_user, require_roles
+from ..deps.auth import get_current_user, require_roles, enforce_job_type_access
 from ..models import User
 from ..repositories import jobs_repo
 from ..schemas import JobDocumentRead, JobDocumentUpdate, JobRead
@@ -25,7 +25,7 @@ from ..services.job_docs_fs import (
 from ..services.thumbnails import ensure_pdf_thumbnail
 from ..services.jobs_service import to_job_read
 
-router = APIRouter(tags=["job-documents"])
+router = APIRouter(tags=["job-documents"], dependencies=[Depends(enforce_job_type_access)])
 
 
 def _pdf_magic_ok(data: bytes) -> bool:

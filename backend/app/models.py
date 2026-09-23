@@ -18,7 +18,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
-from .constants import DOC_CATEGORY_FIELD, JOB_TYPE_NEW_CONSTRUCTION
+from .constants import DOC_CATEGORY_FIELD, JOB_TYPE_NEW_CONSTRUCTION, ROLE_JOB_TYPES, VALID_JOB_TYPES
 
 
 class Contact(Base):
@@ -87,6 +87,12 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+    job_type_grant_rows: Mapped[List["UserJobTypeGrant"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+        order_by="UserJobTypeGrant.job_type",
+    )
     job_notes: Mapped[List["JobNote"]] = relationship(
         foreign_keys="JobNote.author_user_id",
         passive_deletes=True,
@@ -102,6 +108,45 @@ class User(Base):
         cascade="all, delete-orphan",
         passive_deletes=True,
     )
+
+    @property
+    def role_job_types(self) -> list[str]:
+        """Job types this user's role covers by default."""
+        return sorted(ROLE_JOB_TYPES.get(self.role, frozenset()))
+
+    @property
+    def job_type_grants(self) -> list[str]:
+        """Job types an admin granted to this user individually."""
+        return sorted({g.job_type for g in (self.job_type_grant_rows or [])})
+
+    @property
+    def allowed_job_types(self) -> list[str]:
+        """Role defaults plus individual grants: everything this user may see."""
+        allowed = set(ROLE_JOB_TYPES.get(self.role, frozenset()))
+        allowed.update(self.job_type_grants)
+        return sorted(allowed & VALID_JOB_TYPES)
+
+
+class UserJobTypeGrant(Base):
+    """Admin-granted access to a job type beyond the user's role defaults."""
+
+    __tablename__ = "user_job_type_grants"
+    __table_args__ = (
+        UniqueConstraint("user_id", "job_type", name="uq_user_job_type_grants_user_type"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    job_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    user: Mapped["User"] = relationship(back_populates="job_type_grant_rows")
 
 
 class Job(Base):

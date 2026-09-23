@@ -87,6 +87,15 @@ STATUS_ISSUE = "issue"
 
 VALID_ROLES = frozenset({"admin", "office", "field"})
 
+# Job types each role can see out of the box. Admins can grant individual
+# users additional job types on top of this (user_job_type_grants); grants
+# only ever add access, never remove it.
+ROLE_JOB_TYPES: dict[str, frozenset[str]] = {
+    "admin": VALID_JOB_TYPES,
+    "office": VALID_JOB_TYPES,
+    "field": VALID_JOB_TYPES - {JOB_TYPE_SALES},
+}
+
 MAX_JOB_CONTACTS = 25
 DOC_CATEGORY_FIELD = "field"
 DOC_CATEGORY_PERMIT = "permit"

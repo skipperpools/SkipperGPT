@@ -2901,6 +2901,27 @@ body.photo-viewer-open {
   border-radius: var(--radius-sm);
   border: 1px solid var(--border);
 }
+.users-jobtypes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  min-width: 180px;
+}
+
+.users-jobtypes__opt {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+  font-size: 0.9em;
+  cursor: pointer;
+}
+
+.users-jobtypes__opt.is-role-default {
+  opacity: 0.55;
+  cursor: default;
+}
+
 .users-table__actions {
   display: flex;
   flex-wrap: wrap;

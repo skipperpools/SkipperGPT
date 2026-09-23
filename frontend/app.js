@@ -67,6 +67,16 @@ const poller = {
   },
 };
 
+// Mirrors ROLE_JOB_TYPES in backend/app/constants.py. Used only for the
+// Users admin UI (live preview when the role dropdown changes); access itself
+// comes from state.user.allowed_job_types, which the server computes.
+const GRANTABLE_JOB_TYPES = ["sales", "new_construction", "renovation", "misc"];
+const ROLE_JOB_TYPES = {
+  admin: GRANTABLE_JOB_TYPES,
+  office: GRANTABLE_JOB_TYPES,
+  field: ["new_construction", "renovation", "misc"],
+};
+
 const JOB_TYPE_LABELS = {
   all: "All",
   sales: "Sales",
@@ -1177,8 +1187,16 @@ function canViewBillingNotifications() {
   return role === "admin" || role === "office";
 }
 
+/** Role defaults + admin-granted job types (server-computed on /auth/me). */
+function canViewJobType(jobType) {
+  const allowed = state.user?.allowed_job_types;
+  if (Array.isArray(allowed)) return allowed.includes(jobType);
+  // Older server without per-user grants: fall back to the role defaults.
+  return (ROLE_JOB_TYPES[state.user?.role] || []).includes(jobType);
+}
+
 function canViewSalesJobs() {
-  return state.user?.role !== "field";
+  return canViewJobType("sales");
 }
 
 function closeUserMenu() {
@@ -7800,7 +7818,7 @@ async function refreshUsersModal() {
     const table = el("table", { class: "users-table" });
     table.appendChild(
       el("thead", {}, [
-        el("tr", {}, ["Username", "Role", "Active", "New password", "Actions"].map((h) => el("th", {}, h))),
+        el("tr", {}, ["Username", "Role", "Job access", "Active", "New password", "Actions"].map((h) => el("th", {}, h))),
       ])
     );
     const tb = el("tbody", {});
@@ -7812,12 +7830,37 @@ async function refreshUsersModal() {
           el("option", { value: r, selected: r === u.role ? true : null }, r)
         )
       );
+      // Job access: role-covered types are checked + locked; the rest are
+      // per-user grants the admin can toggle (add-only on top of the role).
+      const grants = new Set(u.job_type_grants || []);
+      const jobTypeBoxes = GRANTABLE_JOB_TYPES.map((jt) => {
+        const cb = el("input", { type: "checkbox", value: jt });
+        cb.dataset.granted = grants.has(jt) ? "1" : "";
+        cb.addEventListener("change", () => {
+          if (!cb.disabled) cb.dataset.granted = cb.checked ? "1" : "";
+        });
+        return { jt, cb, label: el("label", { class: "users-jobtypes__opt" }, [cb, ` ${jobTypeLabel(jt)}`]) };
+      });
+      const syncJobTypeBoxes = () => {
+        const roleTypes = ROLE_JOB_TYPES[roleSelect.value] || [];
+        for (const { jt, cb, label } of jobTypeBoxes) {
+          const byRole = roleTypes.includes(jt);
+          cb.disabled = byRole;
+          cb.checked = byRole || cb.dataset.granted === "1";
+          label.classList.toggle("is-role-default", byRole);
+          label.title = byRole ? `Included with the ${roleSelect.value} role` : "Grant this user access";
+        }
+      };
+      roleSelect.addEventListener("change", syncJobTypeBoxes);
+      syncJobTypeBoxes();
+      const jobTypesCell = el("div", { class: "users-jobtypes" }, jobTypeBoxes.map((b) => b.label));
       const activeCb = el("input", { type: "checkbox", checked: u.is_active ? true : null });
       const passInput = el("input", { type: "password", placeholder: "optional", autocomplete: "new-password" });
       tb.appendChild(
         el("tr", { dataset: { userId: String(u.id) } }, [
           el("td", {}, u.username),
           el("td", {}, [roleSelect]),
+          el("td", {}, [jobTypesCell]),
           el("td", {}, [activeCb]),
           el("td", {}, [passInput]),
           el(
@@ -7842,6 +7885,9 @@ async function refreshUsersModal() {
                     const payload = {
                       role: roleSelect.value,
                       is_active: activeCb.checked,
+                      job_type_grants: jobTypeBoxes
+                        .filter(({ cb }) => !cb.disabled && cb.checked)
+                        .map(({ jt }) => jt),
                     };
                     const np = passInput.value?.trim();
                     if (np) payload.password = np;
@@ -7897,7 +7943,9 @@ function applyRoleVisibility() {
   for (const btn of $$('[data-menu-action="contacts"]')) btn.hidden = !canCreateJob();
   for (const btn of $$('[data-menu-action="review-feedback"]')) btn.hidden = !canManageUsers();
   for (const btn of $$('[data-menu-action="task-templates"]')) btn.hidden = !canCreateJob();
-  for (const btn of $$('[data-job-type-filter="sales"]')) btn.hidden = !canViewSalesJobs();
+  for (const jt of GRANTABLE_JOB_TYPES) {
+    for (const btn of $$(`[data-job-type-filter="${jt}"]`)) btn.hidden = !canViewJobType(jt);
+  }
   for (const btn of $$('[data-job-type-filter="archived"]')) btn.hidden = !canViewArchivedJobs();
   if (!canViewArchivedJobs() && state.includeArchived) state.includeArchived = false;
   renderUserMenuBadge();
@@ -7925,7 +7973,7 @@ function wireSearch() {
 }
 
 function refreshJobTypeTabs() {
-  if (!canViewSalesJobs() && state.jobTypeFilter === "sales") {
+  if (GRANTABLE_JOB_TYPES.includes(state.jobTypeFilter) && !canViewJobType(state.jobTypeFilter)) {
     state.jobTypeFilter = "all";
   }
   if (!canViewArchivedJobs() && state.includeArchived) {
@@ -7950,10 +7998,10 @@ function refreshJobTypeTabs() {
       btn.classList.toggle("is-active", state.includeArchived);
       continue;
     }
-    const isSalesBtn = key === "sales";
-    if (isSalesBtn) btn.hidden = !canViewSalesJobs();
+    const hiddenType = key !== "all" && !canViewJobType(key);
+    btn.hidden = hiddenType;
     const label = JOB_TYPE_LABELS[key] || JOB_TYPE_LABELS.all;
-    const count = isSalesBtn && !canViewSalesJobs() ? 0 : (counts[key] ?? 0);
+    const count = hiddenType ? 0 : (counts[key] ?? 0);
     btn.textContent = `${label} (${count})`;
     btn.classList.toggle("is-active", !state.includeArchived && key === state.jobTypeFilter);
   }
@@ -7972,7 +8020,7 @@ function wireJobTypeTabs() {
         await loadJobs();
         return;
       }
-      if (selected === "sales" && !canViewSalesJobs()) {
+      if (selected !== "all" && !canViewJobType(selected)) {
         state.jobTypeFilter = "all";
         refreshJobTypeTabs();
         applyFilter();

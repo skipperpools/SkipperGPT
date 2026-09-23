@@ -19,7 +19,7 @@ from ..constants import (
 )
 from ..config import settings
 from ..database import get_db
-from ..deps.auth import get_current_user, require_roles
+from ..deps.auth import get_current_user, require_roles, enforce_job_type_access, allowed_job_types_for
 from ..models import User
 from ..repositories import jobs_repo, notifications_repo
 from ..schemas import (
@@ -43,7 +43,7 @@ from ..services.job_sketches_fs import move_job_sketches_on_rename
 from ..schedule_pdf import build_schedule_pdf
 from ..services.jobs_service import to_job_read, to_job_read_list
 
-router = APIRouter(prefix="/api/jobs", tags=["jobs"])
+router = APIRouter(prefix="/api/jobs", tags=["jobs"], dependencies=[Depends(enforce_job_type_access)])
 
 
 def _to_job_note_read(note) -> JobNoteRead:
@@ -70,8 +70,8 @@ def list_jobs(
             detail="Only admin and office users can view archived jobs",
         )
     jobs = jobs_repo.list_jobs(db, include_archived=include_archived)
-    if user.role == "field":
-        jobs = [job for job in jobs if job.job_type != JOB_TYPE_SALES]
+    allowed = allowed_job_types_for(db, user)
+    jobs = [job for job in jobs if job.job_type in allowed]
     return to_job_read_list(jobs)
 
 
@@ -87,8 +87,8 @@ def export_schedule_pdf(
             detail="Only admin and office users can view archived jobs",
         )
     jobs = jobs_repo.list_jobs(db, include_archived=include_archived)
-    if user.role == "field":
-        jobs = [job for job in jobs if job.job_type != JOB_TYPE_SALES]
+    allowed = allowed_job_types_for(db, user)
+    jobs = [job for job in jobs if job.job_type in allowed]
     pdf_bytes = build_schedule_pdf(jobs, as_of=date.today())
     filename = f"Schedules-{date.today().isoformat()}.pdf"
     return Response(

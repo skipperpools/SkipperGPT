@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from ..config import settings
 from ..database import get_db
-from ..deps.auth import get_current_user
+from ..deps.auth import get_current_user, enforce_job_type_access
 from ..models import User
 from ..repositories import jobs_repo
 from ..schemas import JobRead, JobSketchRead
@@ -28,7 +28,7 @@ from ..services.job_sketches_service import grid_spacing_from_document, validate
 from ..services.jobs_service import to_job_read
 from ..services.thumbnails import ensure_sketch_thumbnail
 
-router = APIRouter(tags=["job-sketches"])
+router = APIRouter(tags=["job-sketches"], dependencies=[Depends(enforce_job_type_access)])
 
 _VALID_GRID = {1, 3, 6, 12}
 

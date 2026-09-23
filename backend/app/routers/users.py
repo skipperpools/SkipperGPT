@@ -55,6 +55,7 @@ def create_user_route(
         username=payload.username,
         hashed_password=hashed,
         role=payload.role,
+        job_type_grants=payload.job_type_grants,
     )
 
 
@@ -86,7 +87,9 @@ def update_user_route(
         fields["role"] = raw["role"]
     if "is_active" in raw:
         fields["is_active"] = raw["is_active"]
-    return users_repo.update_user(db, user=user, fields=fields)
+    return users_repo.update_user(
+        db, user=user, fields=fields, job_type_grants=raw.get("job_type_grants")
+    )
 
 
 @router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)

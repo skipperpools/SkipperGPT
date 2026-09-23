@@ -29,7 +29,7 @@ class JobDbPerformanceTests(unittest.TestCase):
             poolclass=StaticPool,
         )
         Base.metadata.create_all(self.engine)
-        self.SessionLocal = sessionmaker(bind=self.engine, autoflush=False, autocommit=False)
+        self.SessionLocal = sessionmaker(bind=self.engine, autoflush=False, autocommit=False, expire_on_commit=False)
         self.current_user = User(
             username="office_user",
             hashed_password="x",

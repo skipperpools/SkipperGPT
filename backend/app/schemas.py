@@ -422,12 +422,26 @@ class UserRead(BaseModel):
     is_active: bool
     push_enabled: bool = False
     created_at: datetime
+    role_job_types: List[str] = Field(default_factory=list)
+    job_type_grants: List[str] = Field(default_factory=list)
+    allowed_job_types: List[str] = Field(default_factory=list)
 
 
 class UserCreate(BaseModel):
     username: str = Field(..., min_length=1, max_length=64)
     password: str = Field(..., min_length=1, max_length=128)
     role: str = Field(..., min_length=1, max_length=16)
+    job_type_grants: Optional[List[str]] = None
+
+    @field_validator("job_type_grants")
+    @classmethod
+    def _grants_valid_create(cls, v: Optional[List[str]]) -> Optional[List[str]]:
+        if v is None:
+            return v
+        bad = sorted(set(v) - VALID_JOB_TYPES)
+        if bad:
+            raise ValueError(f"job_type_grants has unknown job type(s) {bad}; must be from {sorted(VALID_JOB_TYPES)}")
+        return sorted(set(v))
 
     @field_validator("password")
     @classmethod
@@ -448,6 +462,17 @@ class UserUpdate(BaseModel):
     password: Optional[str] = Field(None, min_length=1, max_length=128)
     role: Optional[str] = Field(None, min_length=1, max_length=16)
     is_active: Optional[bool] = None
+    job_type_grants: Optional[List[str]] = None
+
+    @field_validator("job_type_grants")
+    @classmethod
+    def _grants_valid_update(cls, v: Optional[List[str]]) -> Optional[List[str]]:
+        if v is None:
+            return v
+        bad = sorted(set(v) - VALID_JOB_TYPES)
+        if bad:
+            raise ValueError(f"job_type_grants has unknown job type(s) {bad}; must be from {sorted(VALID_JOB_TYPES)}")
+        return sorted(set(v))
 
     @field_validator("password")
     @classmethod

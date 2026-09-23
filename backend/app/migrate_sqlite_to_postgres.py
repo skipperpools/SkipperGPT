@@ -50,6 +50,7 @@ logger = logging.getLogger("skipper.migrate")
 # Parents first; FK children later. Matches the foreign keys defined in models.py.
 TABLE_ORDER: List[str] = [
     "users",
+    "user_job_type_grants",
     "contacts",
     "jobs",
     "job_contacts",

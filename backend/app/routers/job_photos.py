@@ -21,7 +21,7 @@ except Exception:  # noqa: BLE001 - missing wheel or libheif at runtime; fall ba
 
 from ..config import settings
 from ..database import SessionLocal, get_db
-from ..deps.auth import get_current_user
+from ..deps.auth import get_current_user, enforce_job_type_access
 from ..models import User
 from ..repositories import jobs_repo
 from ..schemas import JobPhotoRead, JobRead
@@ -35,7 +35,7 @@ from ..services.job_photos_fs import (
 from ..services.thumbnails import ensure_photo_display, ensure_photo_thumbnail
 from ..services.jobs_service import to_job_read
 
-router = APIRouter(tags=["job-photos"])
+router = APIRouter(tags=["job-photos"], dependencies=[Depends(enforce_job_type_access)])
 
 _EXT_TO_CT = {
     ".jpg": "image/jpeg",

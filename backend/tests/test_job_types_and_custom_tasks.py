@@ -310,7 +310,9 @@ class JobTypesAndCustomTasksTests(unittest.TestCase):
             f"/api/jobs/{sales_id}/convert-sales",
             json={"target_job_type": "misc"},
         )
-        self.assertEqual(denied.status_code, 403, denied.text)
+        # Field users can't see Sales jobs at all (unless granted), so the
+        # job-type guard hides it with a 404 before the role check runs.
+        self.assertEqual(denied.status_code, 404, denied.text)
 
 
 if __name__ == "__main__":
