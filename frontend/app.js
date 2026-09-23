@@ -6786,15 +6786,23 @@ function renderUserTaskCard(task, onRefresh, options = {}) {
   if (task.is_pinned) {
     metaParts.push(el("span", { class: "user-task-card__pin-badge" }, "Pinned"));
   }
-  if (task.note) {
-    metaParts.push(el("span", { class: "user-task-card__note-flag", title: "Has a note" }, "📝"));
-  }
   if ((task.attachments || []).length) {
     metaParts.push(
       el("span", { class: "user-task-card__attach-flag", title: "Has attachments" }, `📎 ${task.attachments.length}`)
     );
   }
   const metaRow = metaParts.length ? el("div", { class: "user-task-card__meta" }, metaParts) : null;
+
+  // Note preview on the collapsed card (hidden once expanded, where the
+  // editable textarea shows the full note). Click it to expand.
+  const notePreview = task.note
+    ? el("button", {
+        type: "button",
+        class: "user-task-card__note-preview",
+        title: "Show details",
+        "aria-label": "Show details",
+      }, [el("span", { class: "user-task-card__note-preview-text" }, task.note)])
+    : null;
 
   const noteTa = el("textarea", {
     class: "user-task-card__note",
@@ -6945,10 +6953,12 @@ function renderUserTaskCard(task, onRefresh, options = {}) {
   toggleBtn.addEventListener("click", () => {
     setExpanded(!card.classList.contains("user-task-card--expanded"));
   });
+  notePreview?.addEventListener("click", () => setExpanded(true));
   setExpanded(state.userTaskExpanded.has(task.id));
 
   const bodyChildren = [titleRow];
   if (metaRow) bodyChildren.push(metaRow);
+  if (notePreview) bodyChildren.push(notePreview);
   bodyChildren.push(details);
 
   card.appendChild(check);

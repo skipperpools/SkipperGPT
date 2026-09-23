@@ -3467,6 +3467,36 @@ body.photo-viewer-open {
 .user-task-card__attach-flag {
   white-space: nowrap;
 }
+.user-task-card__note-preview {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+  padding: 5px 8px;
+  border: 0;
+  border-left: 2px solid var(--border-strong, var(--border));
+  border-radius: 4px;
+  background: var(--bg-soft);
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 0.78rem;
+  line-height: 1.35;
+  text-align: left;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+/* Clamp lives on the inner span so the button's padding can't reveal a
+   sliver of line 3. */
+.user-task-card__note-preview-text {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+}
+.user-task-card__note-preview:hover { color: var(--text); }
+.user-task-card--expanded .user-task-card__note-preview { display: none; }
+
 .user-task-card__details {
   display: none;
   flex-direction: column;
