@@ -4095,3 +4095,78 @@ body.sketch-editor-open {
   .toast { animation: none; }
   .mobile-user-menu-modal:not([hidden]) .mobile-user-menu-modal__panel { animation: none; }
 }
+
+
+/* ---------- Desktop modal sizing ----------
+   .modal__panel is phone-first (560px). --wide used to only raise max-width,
+   which never widened anything because width stayed at 560px. On desktop,
+   size by content: tables/galleries get room, single-record forms stay
+   readable. Mobile (< 1024px) is unchanged. */
+@media (min-width: 1024px) {
+  .modal__panel--wide {
+    width: min(1100px, calc(100vw - 64px));
+    max-width: none;
+    max-height: 88vh;
+  }
+  .modal__panel--form,
+  .modal__panel--wide.modal__panel--form {
+    width: min(720px, calc(100vw - 64px));
+  }
+  .modal__header { padding: 16px 28px; }
+  .modal__body { padding: 20px 28px; }
+  .modal__footer { padding: 14px 28px; }
+
+  /* Tables fit the wider panel; action buttons sit on one line. */
+  .users-table td.users-table__actions {
+    display: table-cell;
+    white-space: nowrap;
+  }
+  .users-table td.users-table__actions > * + * { margin-left: 6px; }
+  .users-table select { min-width: 96px; }
+  .users-add__row { flex-wrap: nowrap; }
+  .contacts-dir-table td { vertical-align: middle; }
+  .contacts-dir-actions { text-align: right; }
+  .contacts-dir-actions > * + * { margin-left: 6px; }
+
+  /* Task templates: New Construction (the long list) in the left column,
+     the short job types stacked on the right. */
+  #task-templates-modal-body {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    /* 3 short sections on the right; the trailing 1fr row soaks up the
+       long list's extra height so the right-hand cards don't spread apart. */
+    grid-template-rows: auto auto auto 1fr;
+    align-items: start;
+    column-gap: 16px;
+  }
+  #task-templates-modal-body > :not(.task-templates__section) { grid-column: 1 / -1; }
+  #task-templates-modal-body .task-templates__section { grid-column: 2; }
+  #task-templates-modal-body .task-templates__section[data-job-type="new_construction"] {
+    grid-column: 1;
+    grid-row: 1 / span 4;
+  }
+}
+
+/* ---------- Desktop account dropdown ---------- */
+@media (min-width: 901px) {
+  .topbar__menu {
+    min-width: 240px;
+    padding: 6px;
+    border-radius: var(--radius-lg, 12px);
+    box-shadow: var(--shadow-lg);
+    z-index: 60;
+    animation: topbarMenuIn 0.12s ease-out;
+  }
+  .topbar__menu-item[data-menu-action="logout"] {
+    margin-top: 4px;
+    border-top: 1px solid var(--border);
+    border-radius: 0 0 8px 8px;
+  }
+}
+@keyframes topbarMenuIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .topbar__menu { animation: none; }
+}

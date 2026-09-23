@@ -1232,9 +1232,12 @@ function closeAllUserMenus() {
 }
 
 function shouldUseMobileUserMenu(menuEl) {
-  if (isMobileUserMenuViewport()) return true;
+  // Phones/tablets get the full-screen sheet; desktop gets the dropdown
+  // anchored to the name pill. (Don't test the menu's computed display:
+  // while it's [hidden] that is always "none", which forced the sheet on
+  // desktop too.)
   if (!menuEl) return true;
-  return window.getComputedStyle(menuEl).display === "none";
+  return isMobileUserMenuViewport();
 }
 
 function syncUserMenu() {
@@ -7672,7 +7675,7 @@ async function refreshTaskTemplatesModal() {
     for (let i = 0; i < jobTypes.length; i += 1) {
       const jobType = jobTypes[i];
       const rows = lists[i] || [];
-      const section = el("section", { class: "task-templates__section" }, [
+      const section = el("section", { class: "task-templates__section", dataset: { jobType } }, [
         el("h3", { class: "users-section-title" }, jobTypeLabel(jobType)),
       ]);
       const list = el("ul", { class: "task-templates__list" });
@@ -8061,6 +8064,17 @@ function wireShell() {
       if (isMobileUserMenuViewport()) return;
       if (!menu.hidden && !e.target.closest(".topbar__user-menu")) closeUserMenu();
     });
+    // Picking an item closes the dropdown; Esc closes it and returns focus.
+    menu.addEventListener("click", (e) => {
+      if (e.target.closest("[data-menu-action]")) closeUserMenu();
+    });
+    document.addEventListener("keydown", (e) => {
+      if (e.key !== "Escape" || menu.hidden) return;
+      closeUserMenu();
+      userBtn.focus();
+    });
+    // Resizing across the breakpoint shouldn't strand an open menu.
+    window.matchMedia(MOBILE_USER_MENU_QUERY).addEventListener?.("change", closeAllUserMenus);
   }
 
   if (mobileMenuModal) {

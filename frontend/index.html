@@ -112,7 +112,7 @@
       <!-- New Job modal -->
       <div id="modal" class="modal" hidden>
         <div class="modal__backdrop" data-close="1"></div>
-        <form id="new-job-form" class="modal__panel" aria-labelledby="modal-title">
+        <form id="new-job-form" class="modal__panel modal__panel--form" aria-labelledby="modal-title">
           <header class="modal__header">
             <h2 id="modal-title">New Job</h2>
             <button type="button" class="btn btn--ghost" data-close="1" aria-label="Close">x</button>
@@ -206,7 +206,7 @@
       <!-- Edit Job modal (admin) -->
       <div id="edit-job-modal" class="modal" hidden>
         <div class="modal__backdrop" data-close="1"></div>
-        <form id="edit-job-form" class="modal__panel" aria-labelledby="edit-job-modal-title">
+        <form id="edit-job-form" class="modal__panel modal__panel--form" aria-labelledby="edit-job-modal-title">
           <input type="hidden" id="edit-job-id" name="job_id" value="" />
           <header class="modal__header">
             <h2 id="edit-job-modal-title">Edit Job</h2>
@@ -337,7 +337,7 @@
       <!-- Requests / bugs (submit + your submissions) -->
       <div id="feedback-modal" class="modal" hidden>
         <div class="modal__backdrop" data-close="1"></div>
-        <div class="modal__panel modal__panel--wide" aria-labelledby="feedback-modal-title">
+        <div class="modal__panel modal__panel--wide modal__panel--form" aria-labelledby="feedback-modal-title">
           <header class="modal__header">
             <h2 id="feedback-modal-title">Requests &amp; bugs</h2>
             <button type="button" class="btn btn--ghost" data-close="1" aria-label="Close">x</button>
@@ -470,7 +470,7 @@
       <!-- Contacts modal (read-only) -->
       <div id="contacts-modal" class="modal" hidden>
         <div class="modal__backdrop" data-close="1"></div>
-        <div class="modal__panel modal__panel--wide" aria-labelledby="contacts-modal-title">
+        <div class="modal__panel modal__panel--wide modal__panel--form" aria-labelledby="contacts-modal-title">
           <header class="modal__header">
             <h2 id="contacts-modal-title">Contacts - <span id="contacts-modal-title-text"></span></h2>
             <button type="button" class="btn btn--ghost" data-close="1" aria-label="Close">x</button>
@@ -482,7 +482,7 @@
       <!-- Notes modal -->
       <div id="notes-modal" class="modal" hidden>
         <div class="modal__backdrop" data-close="1"></div>
-        <div class="modal__panel modal__panel--wide" aria-labelledby="notes-modal-title">
+        <div class="modal__panel modal__panel--wide modal__panel--form" aria-labelledby="notes-modal-title">
           <header class="modal__header">
             <h2 id="notes-modal-title">Notes - <span id="notes-modal-title-text"></span></h2>
             <button type="button" class="btn btn--ghost" data-close="1" aria-label="Close">x</button>
