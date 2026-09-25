@@ -40,6 +40,9 @@
   --status-completed: #1f9d55;
   --status-issue: #d83a3a;
 
+  /* "My tasks" category colors */
+  --task-cat-sales: #2e9e62;
+
   --shadow-sm: 0 1px 2px rgba(13, 32, 51, 0.06), 0 1px 3px rgba(13, 32, 51, 0.08);
   --shadow-md: 0 4px 12px rgba(13, 32, 51, 0.10), 0 2px 4px rgba(13, 32, 51, 0.06);
   --shadow-lg: 0 12px 28px rgba(13, 32, 51, 0.18);
@@ -3010,8 +3013,8 @@ body.photo-viewer-open {
   border-left-color: var(--border-strong);
 }
 .user-task[data-category="sales"] {
-  border-left-color: var(--section-notes-title);
-  background: color-mix(in srgb, var(--section-notes-title) 5%, var(--bg-soft));
+  border-left-color: var(--task-cat-sales);
+  background: color-mix(in srgb, var(--task-cat-sales) 5%, var(--bg-soft));
 }
 .user-task[data-category="construction"] {
   border-left-color: var(--status-in-progress);
@@ -3023,7 +3026,7 @@ body.photo-viewer-open {
 }
 .user-task--pinned[data-category="sales"],
 .user-task[data-pinned="1"][data-category="sales"] {
-  background: color-mix(in srgb, var(--section-notes-title) 6%, color-mix(in srgb, var(--accent) 8%, var(--bg-soft)));
+  background: color-mix(in srgb, var(--task-cat-sales) 6%, color-mix(in srgb, var(--accent) 8%, var(--bg-soft)));
 }
 .user-task--pinned[data-category="construction"],
 .user-task[data-pinned="1"][data-category="construction"] {
@@ -3291,7 +3294,7 @@ body.photo-viewer-open {
   flex: 0 0 auto;
 }
 .user-tasks-column[data-category="sales"] .user-tasks-column__header {
-  border-top-color: var(--section-notes-title);
+  border-top-color: var(--task-cat-sales);
 }
 .user-tasks-column[data-category="construction"] .user-tasks-column__header {
   border-top-color: var(--status-in-progress);
@@ -3337,7 +3340,7 @@ body.photo-viewer-open {
   border-left: 4px solid var(--border-strong);
 }
 .user-task-card[data-category="sales"] {
-  border-left-color: var(--section-notes-title);
+  border-left-color: var(--task-cat-sales);
 }
 .user-task-card[data-category="construction"] {
   border-left-color: var(--status-in-progress);
@@ -3526,6 +3529,32 @@ body.photo-viewer-open {
   border-radius: var(--radius-sm);
   background: #fff;
   color: var(--text);
+}
+.user-task-card__category-chip {
+  display: inline-block;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  padding: 1px 6px;
+  border-radius: 999px;
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--border-strong) 22%, transparent);
+}
+.user-task-card__category-chip[data-category="construction"] {
+  color: var(--status-in-progress);
+  background: color-mix(in srgb, var(--status-in-progress) 12%, transparent);
+}
+.user-task-card__category-chip[data-category="warranty"] {
+  color: var(--status-issue);
+  background: color-mix(in srgb, var(--status-issue) 12%, transparent);
+}
+.user-task-card__category-chip[data-category="sales"] {
+  color: var(--task-cat-sales);
+  background: color-mix(in srgb, var(--task-cat-sales) 14%, transparent);
+}
+.user-tasks-column--assignee .user-tasks-column__header {
+  border-top-color: var(--brand);
 }
 .user-task-card__assigned-note {
   font-size: 0.74rem;

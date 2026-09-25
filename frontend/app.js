@@ -6693,6 +6693,8 @@ function renderUserTaskCard(task, onRefresh, options = {}) {
     showCreator = false,
     showJobBadge = true,
     showJobPicker = true,
+    showCategoryChip = false,
+    hideAssigneeNote = false,
   } = options;
 
   const card = el("div", {
@@ -6774,7 +6776,14 @@ function renderUserTaskCard(task, onRefresh, options = {}) {
       }, `From ${task.creator_username}`)
     );
   }
-  if (showAssignee && task.assignee_username) {
+  if (showCategoryChip) {
+    const catValue = task.category || "general";
+    const catLabel = USER_TASK_CATEGORIES.find((c) => c.value === catValue)?.label || catValue;
+    metaParts.push(
+      el("span", { class: "user-task-card__category-chip", dataset: { category: catValue } }, catLabel)
+    );
+  }
+  if (showAssignee && !hideAssigneeNote && task.assignee_username) {
     metaParts.push(el("span", { class: "user-task-card__assigned-note" }, `→ ${task.assignee_username}`));
   }
   if (showJobBadge && task.job_id && task.job_label) {
@@ -7014,6 +7023,59 @@ function renderUserTasksBoard(boardEl, items, onRefresh, options = {}) {
   }
 }
 
+/**
+ * "Tasks I've created" view: one column per assignee (A→Z), cards color-coded
+ * by category via their data-category left border plus a labeled chip.
+ * Within a column, cards cluster by category in USER_TASK_CATEGORIES order;
+ * the server's order (pinned first, then sort_order) is kept inside each group.
+ */
+function renderUserTasksAssigneeBoard(boardEl, items, onRefresh) {
+  if (!boardEl) return;
+  boardEl.innerHTML = "";
+  const catRank = new Map(USER_TASK_CATEGORIES.map((c, i) => [c.value, i]));
+  const groups = new Map();
+  for (const task of items) {
+    const key = task.assignee_id ?? `name:${task.assignee_username || ""}`;
+    if (!groups.has(key)) {
+      groups.set(key, { name: task.assignee_username || "Unassigned", tasks: [] });
+    }
+    groups.get(key).tasks.push(task);
+  }
+  const sortedGroups = [...groups.values()].sort((a, b) =>
+    a.name.localeCompare(b.name, undefined, { sensitivity: "base" })
+  );
+  for (const group of sortedGroups) {
+    const tasks = group.tasks
+      .map((t, i) => ({ t, i }))
+      .sort(
+        (a, b) =>
+          (catRank.get(a.t.category || "general") ?? 99) - (catRank.get(b.t.category || "general") ?? 99) ||
+          a.i - b.i
+      )
+      .map(({ t }) => t);
+    const column = el("div", { class: "user-tasks-column user-tasks-column--assignee" });
+    const list = el("div", { class: "user-tasks-column__list" });
+    column.appendChild(
+      el("div", { class: "user-tasks-column__header" }, [
+        el("span", {}, group.name),
+        el("span", { class: "user-tasks-column__count" }, String(tasks.length)),
+      ])
+    );
+    for (const task of tasks) {
+      list.appendChild(
+        renderUserTaskCard(task, onRefresh, {
+          draggable: false,
+          showAssignee: true,
+          hideAssigneeNote: true,
+          showCategoryChip: true,
+        })
+      );
+    }
+    column.appendChild(list);
+    boardEl.appendChild(column);
+  }
+}
+
 function getUserTaskCardDragAfterElement(listEl, clientY) {
   const cards = [...listEl.querySelectorAll(":scope > .user-task-card:not(.user-task-card--dragging)")];
   return cards.reduce(
@@ -7247,10 +7309,7 @@ async function refreshUserTasksCreatedList() {
       await refreshUserTasksMineList();
       await refreshUserTasksCreatedList();
     };
-    renderUserTasksBoard(board, items, onRefresh, {
-      draggable: false,
-      showAssignee: true,
-    });
+    renderUserTasksAssigneeBoard(board, items, onRefresh);
     if (!items.length) {
       board.innerHTML = "";
       board.appendChild(el("p", { class: "user-tasks-empty" }, "No tasks assigned to others."));
