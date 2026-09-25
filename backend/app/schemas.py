@@ -10,6 +10,7 @@ from .auth_utils import assert_password_within_bcrypt_limit
 from .constants import (
     JOB_TYPE_NEW_CONSTRUCTION,
     MAX_JOB_CONTACTS,
+    USER_TASK_CATEGORY_CONSTRUCTION,
     USER_TASK_CATEGORY_GENERAL,
     USER_TASK_NOTE_MAX,
     USER_TASK_TITLE_MAX,
@@ -571,7 +572,7 @@ class UserTaskCreate(BaseModel):
     title: str = Field(..., min_length=1, max_length=USER_TASK_TITLE_MAX)
     note: Optional[str] = Field(None, max_length=USER_TASK_NOTE_MAX)
     assignee_id: Optional[int] = None
-    category: str = USER_TASK_CATEGORY_GENERAL
+    category: str = USER_TASK_CATEGORY_CONSTRUCTION
     job_id: Optional[int] = None
 
     @field_validator("category")

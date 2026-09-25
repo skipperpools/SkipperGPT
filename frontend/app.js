@@ -42,10 +42,10 @@ const state = {
 };
 
 const USER_TASK_CATEGORIES = [
-  { value: "general", label: "General" },
-  { value: "sales", label: "Sales" },
   { value: "construction", label: "Construction" },
   { value: "warranty", label: "Warranty" },
+  { value: "sales", label: "Sales" },
+  { value: "general", label: "General" },
 ];
 
 const POLL_BASE_INTERVAL_MS = 5000;
@@ -5794,7 +5794,7 @@ function wireModal() {
     const assigneeId = assigneeRaw ? Number(assigneeRaw) : null;
     const jobRaw = $("#user-task-job")?.value;
     const jobId = jobRaw ? Number(jobRaw) : null;
-    const category = String($("#user-task-category")?.value ?? "general").trim() || "general";
+    const category = String($("#user-task-category")?.value ?? "construction").trim() || "construction";
     if (!title) {
       toast("Title is required", "error");
       return;
@@ -5812,7 +5812,7 @@ function wireModal() {
       const addDetails = $("#user-tasks-add-details");
       if (titleEl) titleEl.value = "";
       if (noteEl) noteEl.value = "";
-      if (categoryEl) categoryEl.value = "general";
+      if (categoryEl) categoryEl.value = "construction";
       if (jobEl) jobEl.value = "";
       if (addDetails) addDetails.open = false;
       if (
