@@ -207,7 +207,6 @@ function renderRecentJobNotesPreview(job) {
   const displayableNotes = allNotes.filter(noteHasDisplayBody);
   const recent = displayableNotes.slice(0, RECENT_JOB_NOTES_COUNT);
   const total = allNotes.length;
-  const moreCount = displayableNotes.length - recent.length;
   const labelText =
     total > RECENT_JOB_NOTES_COUNT ? `Recent Notes (${total})` : "Recent Notes";
 
@@ -225,7 +224,8 @@ function renderRecentJobNotesPreview(job) {
       if (when) metaBits.push(when);
       const bodyPreview = truncateNoteBody(note.body);
       const itemAttrs = { class: "card__recent-note" };
-      if (bodyPreview.truncated && bodyPreview.full) itemAttrs.title = bodyPreview.full;
+      // Body is clamped to one line in CSS, so always offer the full text on hover.
+      if (bodyPreview.full) itemAttrs.title = bodyPreview.full;
       list.appendChild(
         el("li", itemAttrs, [
           el("span", { class: "card__recent-note-meta" }, metaBits.join(" · ")),
@@ -234,11 +234,6 @@ function renderRecentJobNotesPreview(job) {
       );
     }
     children.push(list);
-    if (moreCount > 0) {
-      children.push(
-        el("span", { class: "card__recent-notes-more" }, `+${moreCount} more`)
-      );
-    }
   }
 
   const ctaText = total > 0 ? "Tap to read all notes" : "Tap to add a note";
@@ -2359,7 +2354,7 @@ function renderFront(job) {
         frontActions.length ? el("div", { class: "card__front-actions" }, frontActions) : null,
       ]),
       el("h3", { class: "card__customer" }, job.customer_name),
-      el("p", { class: "card__address" }, job.address || "No address"),
+      el("p", { class: "card__address", title: job.address || null }, job.address || "No address"),
       recentNotesBlock,
       lastTaskBlock,
       progressBlock,
@@ -2693,24 +2688,44 @@ async function syncJobNotesAfterChange(job, afterChange) {
   return updated;
 }
 
-/** @param {object} job @param {{ afterChange?: (job: object) => void }} [opts] */
+/** Notes shown on the opened Job Card before "Show N more". */
+const JOB_NOTES_FEED_PREVIEW_COUNT = 3;
+/** Job ids whose opened-card Job Notes list is expanded (survives card re-renders). */
+const expandedJobNotesFeedIds = new Set();
+
+/**
+ * @param {object} job
+ * @param {{ afterChange?: (job: object) => void, previewCount?: number }} [opts]
+ *   previewCount: when set, only that many newest notes show until the user expands.
+ */
 function buildJobNotesFeedBody(job, opts = {}) {
-  const { afterChange } = opts;
+  const { afterChange, previewCount } = opts;
   const notes = Array.isArray(job.job_notes) ? job.job_notes : [];
   const body = el("div", { class: "job-notes-feed__body" });
   const list = el("ul", { class: "job-notes-feed__list" });
+  const limit = previewCount != null && notes.length > previewCount ? previewCount : null;
+  const hiddenCount = limit != null ? notes.length - limit : 0;
+  let expanded = limit != null && expandedJobNotesFeedIds.has(job.id);
   if (!notes.length) {
     list.appendChild(el("li", { class: "job-notes-feed__empty" }, "No notes yet."));
   } else {
-    for (const note of notes) {
+    for (const [idx, note] of notes.entries()) {
       const authoredBy = note.author_username || `User #${note.author_user_id}`;
       const when = fmtDateTime(note.created_at);
       const headerBits = [authoredBy];
       if (when) headerBits.push(when);
-      const row = el("li", { class: "job-notes-feed__item" }, [
-        el("div", { class: "job-notes-feed__meta" }, headerBits.join(" · ")),
-        el("p", { class: "job-notes-feed__text" }, note.body || ""),
-      ]);
+      const isOverflow = limit != null && idx >= limit;
+      const row = el(
+        "li",
+        {
+          class: `job-notes-feed__item${isOverflow ? " job-notes-feed__item--overflow" : ""}`,
+          hidden: isOverflow && !expanded,
+        },
+        [
+          el("div", { class: "job-notes-feed__meta" }, headerBits.join(" · ")),
+          el("p", { class: "job-notes-feed__text" }, note.body || ""),
+        ]
+      );
       if (canDeleteJobNote(note)) {
         row.appendChild(
           el(
@@ -2738,6 +2753,37 @@ function buildJobNotesFeedBody(job, opts = {}) {
     }
   }
   body.appendChild(list);
+
+  if (hiddenCount > 0) {
+    // Toggle rows in place (no re-render) so a draft in the composer is never lost.
+    const caret = el("span", { class: "job-notes-feed__toggle-caret", "aria-hidden": "true" });
+    const label = el("span");
+    const toggle = el(
+      "button",
+      {
+        type: "button",
+        class: "job-notes-feed__toggle",
+        onclick: (e) => {
+          e.stopPropagation();
+          expanded = !expanded;
+          if (expanded) expandedJobNotesFeedIds.add(job.id);
+          else expandedJobNotesFeedIds.delete(job.id);
+          syncToggle();
+        },
+      },
+      [label, caret]
+    );
+    const syncToggle = () => {
+      list.querySelectorAll(".job-notes-feed__item--overflow").forEach((li) => {
+        li.hidden = !expanded;
+      });
+      label.textContent = expanded ? "Show less" : `Show ${hiddenCount} more`;
+      caret.textContent = expanded ? "▴" : "▾";
+      toggle.setAttribute("aria-expanded", expanded ? "true" : "false");
+    };
+    syncToggle();
+    body.appendChild(toggle);
+  }
 
   if (canEditJobNotes()) {
     const textarea = el("textarea", {
@@ -2784,12 +2830,10 @@ function buildJobNotesFeedBody(job, opts = {}) {
 
 function renderJobNotesFeed(job) {
   const notes = Array.isArray(job.job_notes) ? job.job_notes : [];
-  const feedBody = buildJobNotesFeedBody(job);
+  const feedBody = buildJobNotesFeedBody(job, { previewCount: JOB_NOTES_FEED_PREVIEW_COUNT });
   return el("section", { class: "job-notes-feed", "aria-label": "Job notes feed" }, [
-    el("details", { class: "job-notes-feed__accordion" }, [
-      el("summary", { class: "job-notes-feed__accordion-summary" }, `Job Notes (${notes.length})`),
-      feedBody,
-    ]),
+    el("h4", { class: "job-notes-feed__heading" }, `Job Notes (${notes.length})`),
+    feedBody,
   ]);
 }
 
@@ -6053,8 +6097,12 @@ function wireModal() {
       }
     }
     if (e.key === "Escape" && document.querySelector(".card.is-flipped.card--mobile-overlay, .card.is-flipped.card--desktop-overlay")) {
-      closeActiveCardOverlay();
-      return;
+      // Let Escape close whatever dialog/modal sits on top of the card first.
+      const layerOnTop = document.querySelector("#custom-task-dialog, .modal:not([hidden])");
+      if (!layerOnTop) {
+        closeActiveCardOverlay();
+        return;
+      }
     }
     if (photosModal && !photosModal.hidden) {
       const tag = e.target?.tagName || "";
@@ -6136,7 +6184,16 @@ function wireModal() {
     (e) => {
       const activeCard = document.querySelector(".card.is-flipped.card--mobile-overlay, .card.is-flipped.card--desktop-overlay");
       if (!activeCard) return;
-      if (activeCard.contains(e.target)) return;
+      // Only a real user click on the page behind the card should close it.
+      // Programmatic clicks (e.g. the temporary <a> used for downloads) are ignored.
+      if (!e.isTrusted) return;
+      const target = e.target;
+      if (!(target instanceof Element) || !target.isConnected) return;
+      if (activeCard.contains(target)) return;
+      // Clicks inside dialogs/modals/viewers opened from the card (Custom Task,
+      // Docs, Photos, Sketches, photo viewer, sketch editor) or on toasts
+      // belong to the card's workflow and must not close it.
+      if (target.closest('[role="dialog"], .modal, .custom-task-dialog, .photo-viewer, .sketch-editor, .toasts')) return;
       closeActiveCardOverlay();
     },
     true

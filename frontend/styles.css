@@ -814,7 +814,7 @@ button.overview-row:last-child {
   margin: 0 0 6px;
   flex: 0 0 auto;
   display: -webkit-box;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 1;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
@@ -830,8 +830,10 @@ button.overview-row:last-child {
 }
 
 .card__recent-notes {
-  flex: 1 1 auto;
-  min-height: 4.75rem;
+  /* Don't shrink: previously this was the only shrinkable block on the fixed-height
+     front, so on busy cards the latest note got squeezed to nothing. */
+  flex: 1 0 auto;
+  min-height: 0;
   margin-top: 4px;
   padding: 8px 10px;
   background: var(--bg-soft);
@@ -858,13 +860,6 @@ button.overview-row:last-child {
 .card__recent-notes__empty-hint {
   margin: 0;
   font-size: 0.82rem;
-  color: var(--text-muted);
-}
-
-.card__recent-notes-more {
-  display: block;
-  margin: 4px 0 0;
-  font-size: 0.72rem;
   color: var(--text-muted);
 }
 
@@ -897,7 +892,7 @@ button.overview-row:last-child {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  flex: 1 1 auto;
+  flex: 0 0 auto;
   min-height: 0;
   overflow: hidden;
 }
@@ -924,7 +919,7 @@ button.overview-row:last-child {
   color: var(--text);
   flex-shrink: 0;
   display: -webkit-box;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 1;
   -webkit-box-orient: vertical;
   overflow: hidden;
   word-break: break-word;
@@ -1324,22 +1319,43 @@ button.overview-row:last-child {
 .notes-modal__body-inner .job-notes-feed__body {
   margin-top: 0;
 }
-.job-notes-feed__accordion {
-  margin-top: 2px;
-}
-.job-notes-feed__accordion-summary {
-  cursor: pointer;
+.job-notes-feed__heading {
+  margin: 2px 0 0;
   font-size: 0.72rem;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.5px;
   color: var(--section-job-notes-title);
-  user-select: none;
 }
-.job-notes-feed__accordion-summary:focus-visible {
+.job-notes-feed__item[hidden] {
+  display: none;
+}
+.job-notes-feed__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 2px;
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-elev);
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text);
+  cursor: pointer;
+}
+.job-notes-feed__toggle:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.job-notes-feed__toggle:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
-  border-radius: 4px;
+}
+.job-notes-feed__toggle-caret {
+  font-size: 0.7rem;
+  line-height: 1;
 }
 .job-notes-feed__body {
   margin-top: 8px;
