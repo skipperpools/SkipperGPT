@@ -4122,12 +4122,26 @@ function reorderCardsByCompletion() {
 function openJobCardFromOverview(jobId) {
   const id = Number(jobId);
   clearSearchFilter();
+  // If the active Job Type pill hides this job (e.g. "Renovation" is selected
+  // but the job is New Construction), the card would be display:none while the
+  // desktop overlay still blurs the page. Switch the pill so the card is visible.
+  const job = state.jobsById.get(id);
+  if (job && !jobMatchesActiveFilters(job, "")) {
+    const jt = normalizeJobType(job.job_type);
+    state.jobTypeFilter = canViewJobType(jt) ? jt : "all";
+    refreshJobTypeTabs();
+  }
   state.view = "cards";
   renderAll();
   requestAnimationFrame(() => {
+    const card = getCardById(id);
+    if (!card || card.style.display === "none") {
+      toast("That job isn't in the current view.", "error");
+      return;
+    }
     closeOtherFlippedCards(id);
     flipCard(id, true);
-    getCardById(id)?.scrollIntoView({ behavior: "smooth", block: "center" });
+    card.scrollIntoView({ behavior: "smooth", block: "center" });
   });
 }
 
