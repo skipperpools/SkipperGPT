@@ -651,7 +651,10 @@ button.overview-row:last-child {
 /* ---------- Card (3D flip) ---------- */
 .card {
   perspective: 1400px;
-  height: 360px;
+  /* Grow to fit the front's content (was a fixed 360px, which clipped the
+     Permit/Mgr/Status footer on busy cards). Grid rows stretch every card in a
+     row to the tallest one, so rows stay even. */
+  min-height: 360px;
   position: relative;
 }
 
@@ -741,6 +744,13 @@ button.overview-row:last-child {
 
 .face--back {
   transform: rotateY(180deg);
+}
+
+/* Front stays in normal flow so it sets the card's height; the back remains
+   absolutely positioned over it (and is sized by the overlay when opened). */
+.face--front {
+  position: relative;
+  min-height: 100%;
 }
 
 /* Status color strip on the card */
