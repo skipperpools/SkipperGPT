@@ -686,6 +686,9 @@ class UserTaskNotificationUpdate(BaseModel):
 class AssignableUserRead(BaseModel):
     id: int
     username: str
+    # Job types this user may view (role defaults + grants), so task job
+    # pickers can hide jobs the assignee couldn't open.
+    allowed_job_types: List[str] = Field(default_factory=list)
 
 
 class PushSubscriptionCreate(BaseModel):

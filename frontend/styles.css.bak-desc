@@ -1123,73 +1123,38 @@ button.overview-row:last-child {
 .notes {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 12px 14px;
-  border-left: 4px solid var(--section-notes-title);
+  gap: 6px;
+  border-left: 3px solid var(--section-notes-border);
   border-radius: var(--radius-sm);
   background: var(--section-notes-bg);
-  box-shadow: var(--shadow-sm);
-}
-.notes__head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
 }
 .notes label {
-  font-size: 0.8rem;
-  font-weight: 800;
+  font-size: 0.72rem;
+  font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.6px;
+  letter-spacing: 0.5px;
   color: var(--section-notes-title);
 }
 .notes label::before {
   content: "✎";
   margin-right: 6px;
-  font-size: 0.75rem;
+  font-size: 0.65rem;
   opacity: 0.85;
 }
-.notes__toggle {
-  border: 1px solid var(--section-notes-border);
-  background: #fff;
-  color: var(--section-notes-title);
-  font-size: 0.75rem;
-  font-weight: 700;
-  padding: 3px 10px;
-  border-radius: 999px;
-  cursor: pointer;
-  white-space: nowrap;
-}
-.notes__toggle:hover { background: var(--brand-100); }
-.notes__toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .notes textarea {
   width: 100%;
-  min-height: 64px;
+  min-height: 48px;
   resize: vertical;
   overflow-y: auto;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  padding: 10px 12px;
+  padding: 8px 10px;
   background: #fff;
   color: var(--text);
-  font: inherit;
-  font-size: 1rem;
-  line-height: 1.5;
-  white-space: pre-wrap;
 }
-.notes textarea:disabled {
-  color: var(--text);
-  -webkit-text-fill-color: var(--text);
-  opacity: 1;
-  background: #fff;
-}
-.notes.notes--clipped textarea {
-  -webkit-mask-image: linear-gradient(to bottom, #000 80%, transparent);
-  mask-image: linear-gradient(to bottom, #000 80%, transparent);
-}
-.notes.notes--clipped textarea:focus {
-  -webkit-mask-image: none;
-  mask-image: none;
+.notes.notes--expanded textarea,
+.notes textarea:focus {
+  min-height: 128px;
 }
 .notes textarea:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 

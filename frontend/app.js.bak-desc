@@ -3408,27 +3408,6 @@ function showCustomTaskDialog(job) {
   labelInput.focus();
 }
 
-// Job IDs whose description is expanded to full length (survives card re-renders).
-const expandedJobDescriptions = new Set();
-const JOB_DESC_COLLAPSED_MAX = 220; // px — roughly 9 lines before "Expand" appears
-
-function sizeJobDescription(notesEl) {
-  const ta = notesEl?.querySelector("textarea");
-  const toggle = notesEl?.querySelector(".notes__toggle");
-  if (!ta) return;
-  ta.style.height = "auto";
-  const full = ta.scrollHeight + 2; // + borders
-  const overflows = full > JOB_DESC_COLLAPSED_MAX;
-  const expanded = expandedJobDescriptions.has(notesEl.dataset.jobId);
-  ta.style.height = `${overflows && !expanded ? JOB_DESC_COLLAPSED_MAX : full}px`;
-  notesEl.classList.toggle("notes--clipped", overflows && !expanded);
-  if (toggle) {
-    toggle.hidden = !overflows;
-    toggle.textContent = expanded ? "Collapse \u25B4" : "Expand \u25BE";
-    toggle.setAttribute("aria-expanded", expanded ? "true" : "false");
-  }
-}
-
 function renderBack(job) {
   const list = el("ul", { class: "tasklist" });
 
@@ -3458,58 +3437,33 @@ function renderBack(job) {
     : null;
 
   const notesEditable = canEditJobNotes();
-  const descTextarea = el("textarea", {
-    id: `notes-${job.id}`,
-    class: "notes__text",
-    placeholder: "Issues, gate codes, customer preferences...",
-    readonly: notesEditable ? null : true,
-    disabled: notesEditable ? null : true,
-    oninput: () => sizeJobDescription(notes),
-    onblur: async (e) => {
-      if (!notesEditable) return;
-      const newVal = e.target.value;
-      if ((newVal || "") === (job.notes || "")) return;
-      try {
-        const updated = await apiClient.updateJob(job.id, { notes: newVal });
-        replaceJob(updated);
-        toast("Job description saved", "success");
-      } catch (err) {
-        toast(`Failed to save job description: ${err.message}`, "error");
-      }
-    },
-  }, job.notes || "");
-  const descToggle = el("button", {
-    type: "button",
-    class: "notes__toggle",
-    hidden: true,
-    onclick: (e) => {
-      e.stopPropagation();
-      const k = String(job.id);
-      if (expandedJobDescriptions.has(k)) expandedJobDescriptions.delete(k);
-      else expandedJobDescriptions.add(k);
-      sizeJobDescription(notes);
-    },
-  }, "Expand");
-  const notes = el("div", { class: "notes", dataset: { jobId: String(job.id) } }, [
-    el("div", { class: "notes__head" }, [
-      el("label", { for: `notes-${job.id}` }, "Job Description"),
-      descToggle,
-    ]),
-    descTextarea,
+  const notes = el("div", { class: "notes" }, [
+    el("label", { for: `notes-${job.id}` }, "Job Description"),
+    el("textarea", {
+      id: `notes-${job.id}`,
+      placeholder: "Issues, gate codes, customer preferences...",
+      readonly: notesEditable ? null : true,
+      disabled: notesEditable ? null : true,
+      onclick: (e) => {
+        e.currentTarget.closest(".notes")?.classList.add("notes--expanded");
+      },
+      onfocus: (e) => {
+        e.currentTarget.closest(".notes")?.classList.add("notes--expanded");
+      },
+      onblur: async (e) => {
+        if (!notesEditable) return;
+        const newVal = e.target.value;
+        if ((newVal || "") === (job.notes || "")) return;
+        try {
+          const updated = await apiClient.updateJob(job.id, { notes: newVal });
+          replaceJob(updated);
+          toast("Job description saved", "success");
+        } catch (err) {
+          toast(`Failed to save job description: ${err.message}`, "error");
+        }
+      },
+    }, job.notes || ""),
   ]);
-  // Size once the card is laid out, and again whenever its width changes
-  // (e.g. the card flips open or the window resizes).
-  if (typeof ResizeObserver === "function") {
-    let lastWidth = -1;
-    new ResizeObserver((entries) => {
-      const w = Math.round(entries[0].contentRect.width);
-      if (w === lastWidth || w === 0) return;
-      lastWidth = w;
-      sizeJobDescription(notes);
-    }).observe(notes);
-  } else {
-    requestAnimationFrame(() => sizeJobDescription(notes));
-  }
 
   const headerRight = [
     el("button", {

@@ -24,7 +24,7 @@ def list_assignable_users(
 ) -> list[AssignableUserRead]:
     users = users_repo.list_users(db)
     return [
-        AssignableUserRead(id=u.id, username=u.username)
+        AssignableUserRead(id=u.id, username=u.username, allowed_job_types=u.allowed_job_types)
         for u in users
         if u.is_active
     ]

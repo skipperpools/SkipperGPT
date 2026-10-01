@@ -7,7 +7,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..deps.auth import get_current_user, require_roles, enforce_job_type_access
+from ..deps.auth import (
+    allowed_job_types_for,
+    enforce_job_type_access,
+    get_current_user,
+    require_roles,
+)
 from ..models import Job, User, UserTask
 from ..repositories import jobs_repo, user_tasks_repo, users_repo
 from ..schemas import (
@@ -42,12 +47,29 @@ def _resolve_assignee(db: Session, assignee_id: Optional[int], current: User) ->
     return assignee
 
 
-def _resolve_job(db: Session, job_id: Optional[int]) -> Optional[Job]:
+def _resolve_job(
+    db: Session,
+    job_id: Optional[int],
+    *,
+    actor: Optional[User] = None,
+    assignee: Optional[User] = None,
+) -> Optional[Job]:
+    """Load the job to link, requiring that `actor` (the acting user) and
+    `assignee` can both view its job type. A job the actor can't see reads as
+    "Job not found" so hidden jobs don't reveal they exist."""
     if job_id is None:
         return None
     job = jobs_repo.get_job(db, job_id)
     if job is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Job not found")
+    if actor is not None and job.job_type not in allowed_job_types_for(db, actor):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Job not found")
+    if assignee is not None and job.job_type not in allowed_job_types_for(db, assignee):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"{assignee.username} doesn't have access to view {job.customer_name or 'that job'}. "
+            "Pick a different job or assignee.",
+        )
     return job
 
 
@@ -205,7 +227,7 @@ def create_user_task_route(
     current: User = Depends(get_current_user),
 ) -> UserTaskRead:
     assignee = _resolve_assignee(db, payload.assignee_id, current)
-    job = _resolve_job(db, payload.job_id)
+    job = _resolve_job(db, payload.job_id, actor=current, assignee=assignee)
     item = user_tasks_repo.create_task(
         db,
         creator_id=current.id,
@@ -244,13 +266,25 @@ def update_user_task_route(
     prev_completed = task.completed
     prev_assignee_id = task.assignee_id
 
+    assignee = None
     if "assignee_id" in raw:
         assignee = _resolve_assignee(db, raw["assignee_id"], current)
         raw["assignee_id"] = assignee.id
 
-    if "job_id" in raw:
-        job = _resolve_job(db, raw["job_id"])
-        raw["job_id"] = job.id if job else None
+    # Validate the job link whenever it changes, or when the assignee changes
+    # while a job stays linked (the new assignee must be able to view it).
+    # An unchanged link on an unrelated edit is left alone so older tasks stay
+    # editable.
+    next_job_id = raw["job_id"] if "job_id" in raw else task.job_id
+    job_changed = "job_id" in raw and raw["job_id"] != task.job_id
+    assignee_changed = assignee is not None and assignee.id != task.assignee_id
+    if next_job_id is not None and (job_changed or assignee_changed):
+        _resolve_job(
+            db,
+            next_job_id,
+            actor=current if job_changed else None,
+            assignee=assignee or db.get(User, task.assignee_id),
+        )
 
     user_tasks_repo.update_task(db, task=task, fields=raw)
     db.refresh(task)
